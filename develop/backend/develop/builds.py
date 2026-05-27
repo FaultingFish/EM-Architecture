@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import shlex
 import shutil
 import subprocess
 import tomllib
@@ -35,10 +36,14 @@ class ToolchainNotFoundError(Exception):
     pass
 
 
-def _read_language(proj_dir: Path) -> str:
+def _read_project_toml(proj_dir: Path) -> dict:
     toml_path = proj_dir / "project.toml"
     with open(toml_path, "rb") as f:
-        return tomllib.load(f).get("language", "c")
+        return tomllib.load(f)
+
+
+def _read_language(proj_dir: Path) -> str:
+    return _read_project_toml(proj_dir).get("language", "c")
 
 
 def _toolchain_version(binary: str) -> str:
@@ -99,27 +104,36 @@ def get_build_artifact(project_id: str, sha: str) -> Optional[BuildArtifact]:
     return BuildArtifact(**json.loads(meta_path.read_text()))
 
 
-async def build(project_id: str, version: str | None = None) -> BuildArtifact:
+async def build(project_id: str, version: str | None = None, force: bool = False) -> BuildArtifact:
     """Run the project's build and capture artifacts."""
     proj_path = project_dir(project_id)
     if not proj_path.exists():
         raise FileNotFoundError(f"Project {project_id!r} not found")
 
-    lang = _read_language(proj_path)
+    toml_data = _read_project_toml(proj_path)
+    lang = toml_data.get("language", "c")
+    custom_cmd = toml_data.get("build_command")
     sha = compute_sha(proj_path)
 
     build_dir = proj_path / "builds" / sha
     meta_path = build_dir / "build_meta.json"
     if meta_path.exists():
-        log.info("Build %s already cached for project=%s", sha, project_id)
-        return BuildArtifact(**json.loads(meta_path.read_text()))
+        cached = BuildArtifact(**json.loads(meta_path.read_text()))
+        if cached.success and not force:
+            log.info("Build %s already cached (success) for project=%s", sha, project_id)
+            await broadcaster.broadcast(WsTopic.BUILD_STATUS, {
+                "project_id": project_id, "sha": sha, "phase": "done",
+            })
+            return cached
 
     log.info("Starting build for project=%s lang=%s sha=%s", project_id, lang, sha)
     await broadcaster.broadcast(WsTopic.BUILD_STATUS, {
         "project_id": project_id, "sha": sha, "phase": "starting",
     })
 
-    if lang == "c":
+    if custom_cmd:
+        cmd = shlex.split(custom_cmd)
+    elif lang == "c":
         if not shutil.which(arm_gcc_bin()):
             raise ToolchainNotFoundError(
                 f"{arm_gcc_bin()} not found on PATH. "
@@ -135,6 +149,9 @@ async def build(project_id: str, version: str | None = None) -> BuildArtifact:
         cmd = [cargo_bin(), "build", "--release", "--target", "thumbv8m.main-none-eabi"]
     else:
         raise ValueError(f"Unknown language: {lang}")
+    # Phase 2: TI CCS headless eclipse build (eclipse -application
+    # org.eclipse.cdt.managedbuilder.core.headlessbuild) — not needed
+    # yet; `make -C Debug` via build_command covers CCS projects for V1.
 
     await broadcaster.broadcast(WsTopic.BUILD_STATUS, {
         "project_id": project_id, "sha": sha, "phase": "compiling",

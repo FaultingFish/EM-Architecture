@@ -29,6 +29,10 @@ class Project(BaseModel):
     hal: Hal
     created_at: datetime
     description: Optional[str] = None
+    build_command: Optional[str] = Field(
+        None,
+        description="Shell command to build (default: 'make all' for C, 'cargo build --release ...' for Rust)",
+    )
     versions: List[str] = Field(default_factory=list, description="Git tags")
 
 

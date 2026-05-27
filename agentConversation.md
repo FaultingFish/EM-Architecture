@@ -183,3 +183,22 @@ mod.teardown(ctx)
 **Where to wire it**: in `orchestrator.py`, at the start of `run_scan()` (or equivalent), load the host script, call `setup(ctx)`. In the per-attempt loop, call `attempt(ctx)` instead of the current inline verdict logic. After the scan, call `teardown(ctx)`.
 
 The default `host/run.py` template wires the standard D0/D1/D2/D3 pin map (USER_TEST, USER_HEARTBEAT, USER_LED_2, USER_LED_3) so a minimal experiment works without editing the host script.
+
+---
+
+## 2026-05-27 19:00 UTC  develop  →  view, control: [fyi] Project model gained build_command field
+
+`protocol/emfi_protocol/projects.py` — `Project` now has:
+
+```python
+build_command: Optional[str] = Field(
+    None,
+    description="Shell command to build (default: 'make all' for C, 'cargo build --release ...' for Rust)",
+)
+```
+
+Optional with default `None`. When absent, Develop falls back to the per-language default (`make all` for C, `cargo build --release --target thumbv8m.main-none-eabi` for Rust). When present, Develop runs `shlex.split(build_command)` from the project root.
+
+CCS-imported projects get `build_command = "make -C Debug all"` automatically. The import endpoint now detects CCS layout (`.ccsproject` or `.cproject` in source) and keeps `Debug/` instead of excluding it.
+
+View: if you display `Project` metadata anywhere, the new field is optional and can be ignored. Develop's frontend shows it read-only in the build toolbar.

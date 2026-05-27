@@ -60,6 +60,7 @@ def _load_project(project_path: Path) -> Project:
         if "created_at" in data
         else datetime.now(timezone.utc),
         description=data.get("description"),
+        build_command=data.get("build_command"),
         versions=versions,
     )
 
@@ -238,8 +239,22 @@ def import_project(
     slug = _unique_slug(name)
     dest = project_dir(slug)
 
+    is_ccs = any((src / f).exists() for f in (".ccsproject", ".cproject"))
+
     if exclude is None:
-        exclude = ["Debug/**", ".git/**"]
+        exclude = [".git/**"] if is_ccs else ["Debug/**", ".git/**"]
+    elif is_ccs:
+        exclude = [p for p in exclude if not p.startswith("Debug")]
+
+    if is_ccs:
+        log.info("Detected CCS project layout in %s", source_path)
+
+    build_command: str | None = None
+    if is_ccs:
+        build_command = "make -C Debug all"
+
+    if not description and is_ccs:
+        description = "Imported from Code Composer Studio project; build runs make -C Debug."
 
     log.info("Importing project name=%s from %s -> %s (exclude=%s)", name, source_path, dest, exclude)
 
@@ -269,14 +284,17 @@ def import_project(
             shutil.copy2(item, target)
 
     now = datetime.now(timezone.utc).isoformat()
-    (dest / "project.toml").write_text(
-        f'name = "{name}"\n'
-        f'language = "{language}"\n'
-        f'target = "mspm0l2228"\n'
-        f'hal = "{hal}"\n'
-        f'created_at = "{now}"\n'
-        f'description = "{description}"\n'
-    )
+    toml_lines = [
+        f'name = "{name}"',
+        f'language = "{language}"',
+        f'target = "mspm0l2228"',
+        f'hal = "{hal}"',
+        f'created_at = "{now}"',
+        f'description = "{description}"',
+    ]
+    if build_command:
+        toml_lines.append(f'build_command = "{build_command}"')
+    (dest / "project.toml").write_text("\n".join(toml_lines) + "\n")
 
     if not (dest / "targets.json").exists():
         (dest / "targets.json").write_text("[]\n")

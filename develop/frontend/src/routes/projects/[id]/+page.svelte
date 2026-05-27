@@ -51,6 +51,7 @@
       buildStatus.set(ev.payload?.phase as string);
       if (ev.payload?.phase === 'done' || ev.payload?.phase === 'failed') {
         building = false;
+        lastBuildFailed = ev.payload?.phase === 'failed';
         refreshBuilds();
       }
     }
@@ -103,13 +104,26 @@
 
   function onEditorChange() { dirty = true; }
 
-  async function doBuild() {
+  let lastBuildFailed = false;
+
+  async function doBuild(force = false) {
     building = true;
+    lastBuildFailed = false;
     buildLog.set([]);
     buildStatus.set('starting');
     error = '';
+    tab = 'build';
     try {
-      await triggerBuild(id);
+      const result = await triggerBuild(id, undefined, force);
+      if (result?.success !== undefined) {
+        building = false;
+        lastBuildFailed = !result.success;
+        buildStatus.set(result.success ? 'done' : 'failed');
+        if (result.log_tail) {
+          buildLog.set(result.log_tail.split('\n'));
+        }
+        refreshBuilds();
+      }
     } catch (e: any) {
       error = e.message;
       building = false;
@@ -243,11 +257,17 @@
   <!-- Right: toolbar + console -->
   <div class="panel console-panel">
     <div class="toolbar">
-      <button class="btn small" on:click={doBuild} disabled={building}>
+      <button class="btn small" on:click={() => doBuild()} disabled={building}>
         {building ? '⏳ Building…' : '▶ Build'}
       </button>
+      {#if lastBuildFailed}
+        <button class="btn small retry" on:click={() => doBuild(true)} disabled={building}>Retry</button>
+      {/if}
       <button class="btn small" on:click={doFlash} disabled={builds.length === 0}>Flash</button>
       <a class="btn small link" href="/projects/{id}/asm">ASM</a>
+      {#if project?.build_command}
+        <span class="build-cmd" title={project.build_command}>{project.build_command}</span>
+      {/if}
     </div>
 
     {#if error}
@@ -362,6 +382,11 @@
     display: flex; gap: 6px; padding: 6px 10px;
     background: #f5f5f5; border-bottom: 1px solid #ddd;
   }
+  .build-cmd {
+    font-family: monospace; font-size: 0.7rem; color: #888;
+    background: #f0f0f0; padding: 2px 6px; border-radius: 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px;
+  }
   .git-row {
     display: flex; gap: 4px; padding: 4px 10px;
     border-bottom: 1px solid #eee;
@@ -397,6 +422,7 @@
   .btn:disabled { opacity: 0.4; cursor: default; }
   .btn.small { padding: 3px 8px; font-size: 0.78rem; }
   .btn.link { text-decoration: none; display: inline-flex; align-items: center; }
+  .btn.retry { background: #fef3cd; border-color: #e8d88c; }
   .btn-icon { all: unset; cursor: pointer; padding: 0 4px; }
 
   .host-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }

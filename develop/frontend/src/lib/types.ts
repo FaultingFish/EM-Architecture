@@ -23,6 +23,7 @@ export interface Project {
   hal: 'ti' | 'b01lers';
   created_at: string;
   description?: string | null;
+  build_command?: string | null;
   versions: string[];
 }
 
