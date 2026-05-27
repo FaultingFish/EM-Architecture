@@ -5,9 +5,12 @@ Carry-forward from old-em-setup/glitchweb/backend/app/ports.py.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 import serial.tools.list_ports
+
+LOGGER = logging.getLogger(__name__)
 
 
 def list_ports(known: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -33,6 +36,9 @@ def list_ports(known: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         out.append(info)
 
     out.sort(key=lambda d: d.get("device") or "")
+    LOGGER.info("Port scan: %d ports found", len(out))
+    for p in out:
+        LOGGER.debug("  %s -> %s", p.get("device"), p.get("guess") or "unknown")
     return out
 
 

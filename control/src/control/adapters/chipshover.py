@@ -14,9 +14,12 @@ Build-out tasks:
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from control.adapters.base import BaseAdapter
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ChipShoverAdapter(BaseAdapter):

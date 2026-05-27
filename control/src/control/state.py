@@ -8,9 +8,12 @@ funnel through update_*() methods that emit events.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -117,12 +120,14 @@ class Broadcaster:
         q: asyncio.Queue = asyncio.Queue(maxsize=256)
         with self._lock:
             self._queues.append(q)
+        LOGGER.debug("WS client registered (%d total)", len(self._queues))
         return q
 
     def unregister(self, q: asyncio.Queue) -> None:
         with self._lock:
             if q in self._queues:
                 self._queues.remove(q)
+        LOGGER.debug("WS client unregistered (%d remaining)", len(self._queues))
 
     def broadcast(self, message: Dict[str, Any]) -> None:
         # Drop oldest on backpressure rather than block the producer.

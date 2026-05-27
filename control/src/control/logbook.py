@@ -9,12 +9,15 @@ with the SQLite index per the new spec.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
+
+LOGGER = logging.getLogger(__name__)
 
 
 SQLITE_SCHEMA = """
@@ -48,6 +51,7 @@ class Logbook:
         self._db_lock = threading.Lock()
         with self._db() as db:
             db.executescript(SQLITE_SCHEMA)
+        LOGGER.info("Logbook opened: session=%s dir=%s", self._session_id, self.log_dir)
 
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(str(self._sqlite_path), isolation_level=None)
@@ -79,11 +83,12 @@ class Logbook:
 
         self._mirror_to_sqlite(entry)
 
+        LOGGER.debug("Logbook append: id=%s outcome=%s", entry.get("id"), entry.get("outcome"))
         for fn in list(self._listeners):
             try:
                 fn(entry)
             except Exception:
-                pass
+                LOGGER.exception("Logbook listener error")
         return entry
 
     def _mirror_to_sqlite(self, entry: Dict[str, Any]) -> None:

@@ -5,11 +5,14 @@ Carry-forward from old-em-setup/glitchweb/backend/app/safety.py.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Deque, Optional
+
+LOGGER = logging.getLogger(__name__)
 
 
 class Disarmed(RuntimeError):
@@ -39,11 +42,13 @@ class ArmGate:
         with self._lock:
             self._armed = True
             self._last_pulse_ts = time.monotonic()
+        LOGGER.info("ARM gate ENGAGED")
         self._notify()
 
     def disarm(self) -> None:
         with self._lock:
             self._armed = False
+        LOGGER.info("ARM gate DISARMED")
         self._notify()
 
     def is_armed(self) -> bool:
@@ -51,10 +56,12 @@ class ArmGate:
             if self._armed and self.auto_disarm_seconds > 0:
                 if time.monotonic() - self._last_pulse_ts > self.auto_disarm_seconds:
                     self._armed = False
+                    LOGGER.info("ARM gate auto-disarmed after %.0fs idle", self.auto_disarm_seconds)
             return self._armed
 
     def require_armed(self) -> None:
         if not self.is_armed():
+            LOGGER.warning("Pulse blocked: ARM gate is closed")
             raise Disarmed("Glitch-emitting actions blocked: ARM gate is closed")
         with self._lock:
             self._last_pulse_ts = time.monotonic()
@@ -85,6 +92,7 @@ class RateLimiter:
             while self._window and self._window[0] < cutoff:
                 self._window.popleft()
             if len(self._window) >= self.max_per_sec:
+                LOGGER.warning("Rate limit hit: %s (%.1f/s)", self.name, self.max_per_sec)
                 raise RateLimited(
                     f"Rate limit on '{self.name}': "
                     f"{self.max_per_sec:.1f} per second exceeded"

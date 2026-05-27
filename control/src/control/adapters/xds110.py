@@ -19,11 +19,14 @@ state on the adapter instance and serialize at the router layer.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 from control.adapters.base import BaseAdapter
+
+LOGGER = logging.getLogger(__name__)
 
 
 class XDS110Adapter(BaseAdapter):
@@ -65,9 +68,10 @@ class XDS110Adapter(BaseAdapter):
 
     def detach_debugger(self) -> None:
         if self._debug_proc is not None:
+            LOGGER.info("Terminating OpenOCD process (pid=%d)", self._debug_proc.pid)
             try:
                 self._debug_proc.terminate()
                 self._debug_proc.wait(timeout=5)
             except Exception:
-                pass
+                LOGGER.warning("OpenOCD process did not terminate cleanly")
             self._debug_proc = None

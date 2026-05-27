@@ -8,11 +8,14 @@ thread-safe Config class with load/save/snapshot/update/get + hot reload.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict
+
+LOGGER = logging.getLogger(__name__)
 
 
 DEFAULTS: Dict[str, Any] = {
@@ -102,12 +105,15 @@ class Config:
                 try:
                     loaded = json.loads(self.path.read_text(encoding="utf-8"))
                 except Exception:
+                    LOGGER.warning("Failed to parse config at %s, using defaults", self.path)
                     loaded = {}
                 self._data = _deep_merge(deepcopy(DEFAULTS), loaded)
+                LOGGER.info("Config loaded from %s", self.path)
             else:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 self._data = deepcopy(DEFAULTS)
                 self.save()
+                LOGGER.info("Config created at %s with defaults", self.path)
 
     def save(self) -> None:
         with self._lock:

@@ -14,11 +14,15 @@ Output is an `emfi_protocol.AssemblyListing`.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from emfi_protocol.projects import AssemblyListing
 
+log = logging.getLogger(__name__)
+
 
 def disassemble(elf_path: Path, project_id: str, build_sha: str) -> AssemblyListing:
     """Parse objdump output into an AssemblyListing."""
+    log.info("Disassembling %s (project=%s sha=%s)", elf_path, project_id, build_sha)
     raise NotImplementedError("disassemble.disassemble")

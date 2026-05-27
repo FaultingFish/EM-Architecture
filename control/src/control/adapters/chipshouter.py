@@ -16,9 +16,12 @@ old-em-setup/HANDOFF.md sections on shouter bugs.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, List, Optional
 
 from control.adapters.base import BaseAdapter
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ChipShouterAdapter(BaseAdapter):

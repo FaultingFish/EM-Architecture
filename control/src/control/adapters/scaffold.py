@@ -19,9 +19,12 @@ TODO: use the public close() API rather than poking
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from control.adapters.base import BaseAdapter
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ScaffoldAdapter(BaseAdapter):

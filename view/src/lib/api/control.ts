@@ -1,73 +1,78 @@
-// Typed Control client.
-// TODO: replace these hand-rolled wrappers with output from
-// `openapi-typescript ../protocol/openapi/control.yaml -o control.types.ts`
-// and a thin fetch helper.
-
+import { createLogger } from '../logger';
 import { CONTROL_URL } from '../config';
 
+const log = createLogger('control-api');
+
+async function request(method: string, path: string, body?: unknown) {
+  const url = `${CONTROL_URL}${path}`;
+  log.info(`${method} ${path}`);
+  try {
+    const opts: RequestInit = { method };
+    if (body !== undefined) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(url, opts);
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      log.error(`${method} ${path} => ${r.status}`, text);
+      throw new Error(`Control ${method} ${path} failed: ${r.status}`);
+    }
+    const data = await r.json();
+    log.debug(`${method} ${path} => 200`, data);
+    return data;
+  } catch (err) {
+    if (err instanceof TypeError) {
+      log.error(`${method} ${path} network error — is Control running on ${CONTROL_URL}?`, err.message);
+    }
+    throw err;
+  }
+}
+
 export async function armState() {
-  const r = await fetch(`${CONTROL_URL}/arm_state`);
-  return r.json();
+  return request('GET', '/arm_state');
 }
 
 export async function arm() {
-  const r = await fetch(`${CONTROL_URL}/arm`, { method: 'POST' });
-  return r.json();
+  return request('POST', '/arm');
 }
 
 export async function disarm() {
-  const r = await fetch(`${CONTROL_URL}/disarm`, { method: 'POST' });
-  return r.json();
+  return request('POST', '/disarm');
 }
 
 export async function moveAbs(x: number, y: number, z: number) {
-  const r = await fetch(`${CONTROL_URL}/motion/move_abs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ x, y, z })
-  });
-  return r.json();
+  return request('POST', '/motion/move_abs', { x, y, z });
 }
 
 export async function startCampaign(body: unknown) {
-  const r = await fetch(`${CONTROL_URL}/campaigns`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  return r.json();
+  return request('POST', '/campaigns', body);
 }
 
 export async function listRuns(params: Record<string, string> = {}) {
   const qs = new URLSearchParams(params).toString();
-  const r = await fetch(`${CONTROL_URL}/runs?${qs}`);
-  return r.json();
+  return request('GET', `/runs?${qs}`);
 }
 
 export async function heatmap(z?: number, campaign?: string) {
   const qs = new URLSearchParams();
   if (z !== undefined) qs.set('z', String(z));
   if (campaign) qs.set('campaign', campaign);
-  const r = await fetch(`${CONTROL_URL}/heatmap?${qs.toString()}`);
-  return r.json();
+  return request('GET', `/heatmap?${qs.toString()}`);
 }
 
 export async function replay(runId: string) {
-  const r = await fetch(`${CONTROL_URL}/replay/${runId}`, { method: 'POST' });
-  return r.json();
+  return request('POST', `/replay/${runId}`);
 }
 
 export async function devices() {
-  const r = await fetch(`${CONTROL_URL}/devices`);
-  return r.json();
+  return request('GET', '/devices');
 }
 
 export async function getCampaign(id: string) {
-  const r = await fetch(`${CONTROL_URL}/campaigns/${id}`);
-  return r.json();
+  return request('GET', `/campaigns/${id}`);
 }
 
 export async function stopCampaign(id: string) {
-  const r = await fetch(`${CONTROL_URL}/campaigns/${id}/stop`, { method: 'POST' });
-  return r.json();
+  return request('POST', `/campaigns/${id}/stop`);
 }

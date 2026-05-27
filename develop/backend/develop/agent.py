@@ -14,10 +14,13 @@ See https://docs.anthropic.com/claude/claude-code for installation.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import AsyncIterator
 
 from develop.config import claude_bin
 from develop.projects import project_dir
+
+log = logging.getLogger(__name__)
 
 
 async def run_agent(project_id: str, prompt: str) -> AsyncIterator[str]:
@@ -30,4 +33,5 @@ async def run_agent(project_id: str, prompt: str) -> AsyncIterator[str]:
     - On exit, surface the final return code
     - The Develop WS handler turns this into agent_output events
     """
+    log.info("Launching agent for project=%s prompt=%s", project_id, prompt[:120])
     raise NotImplementedError("agent.run_agent")
