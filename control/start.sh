@@ -51,16 +51,28 @@ done
 # ---------- ensure log dir exists ----------
 mkdir -p "$LOG_DIR"
 
-# ---------- find or create venv ----------
-VENV_DIR="$SCRIPT_DIR/.venv"
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating virtual environment at $VENV_DIR ..."
-    python3 -m venv "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
+# ---------- venv discovery / creation ----------
+# Prefer (in order): caller-activated venv, local control/.venv,
+# shared ../.venv, then create control/.venv as a last resort.
+# The shared ../.venv is the canonical place hardware libs live
+# (chipshover, chipshouter, donjon-scaffold) — picking it up here
+# avoids needing to install them in two places.
+LOCAL_VENV="$SCRIPT_DIR/.venv"
+SHARED_VENV="$SCRIPT_DIR/../.venv"
+
+if [ -n "${VIRTUAL_ENV:-}" ]; then
+    :
+elif [ -d "$LOCAL_VENV" ]; then
+    source "$LOCAL_VENV/bin/activate"
+elif [ -d "$SHARED_VENV" ]; then
+    source "$SHARED_VENV/bin/activate"
+else
+    echo "Creating virtual environment at $LOCAL_VENV ..."
+    python3 -m venv "$LOCAL_VENV"
+    source "$LOCAL_VENV/bin/activate"
+    pip install --quiet --upgrade pip
     pip install --quiet -e ../protocol -e ".[dev]"
     echo "Virtual environment ready."
-else
-    source "$VENV_DIR/bin/activate"
 fi
 
 # ---------- banner ----------
