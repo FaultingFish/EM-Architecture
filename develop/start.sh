@@ -52,6 +52,8 @@ done
 export EMFI_LOG_LEVEL="$LOG_LEVEL"
 export EMFI_LOG_DIR="$LOG_DIR"
 
+PROJECTS_PATH="${EMFI_PROJECTS_ROOT:-$HOME/emfi-projects}"
+
 # ── Prepare log directory and session log file ──────────────
 mkdir -p "$LOG_DIR"
 SESSION_LOG="$LOG_DIR/develop-$(date +%Y%m%d-%H%M%S).log"
@@ -59,20 +61,42 @@ SESSION_LOG="$LOG_DIR/develop-$(date +%Y%m%d-%H%M%S).log"
 # Symlink logs/latest.log → the current session for easy access.
 ln -sfn "$(basename "$SESSION_LOG")" "$LOG_DIR/latest.log"
 
+# ── venv discovery / creation ───────────────────────────────
+# Prefer (in order): caller-activated venv, local develop/.venv,
+# shared ../.venv, then create develop/.venv as a last resort.
+LOCAL_VENV="$SCRIPT_DIR/.venv"
+SHARED_VENV="$SCRIPT_DIR/../.venv"
+
+if [ -n "${VIRTUAL_ENV:-}" ]; then
+    :
+elif [ -d "$LOCAL_VENV" ]; then
+    source "$LOCAL_VENV/bin/activate"
+elif [ -d "$SHARED_VENV" ]; then
+    source "$SHARED_VENV/bin/activate"
+else
+    echo "Creating virtual environment at $LOCAL_VENV ..."
+    python3 -m venv "$LOCAL_VENV"
+    source "$LOCAL_VENV/bin/activate"
+    pip install --quiet --upgrade pip
+    pip install --quiet -e ../protocol -e ".[extras,dev]"
+    echo "Virtual environment ready."
+fi
+
+# Ensure ~/.local/bin (Claude Code CLI) is on PATH for the agent endpoint.
+export PATH="$HOME/.local/bin:$PATH"
+
 # ── Banner ──────────────────────────────────────────────────
 cat <<EOF
 
-  ╔══════════════════════════════════════════╗
-  ║       EMFI Develop  —  starting up       ║
-  ╠══════════════════════════════════════════╣
-  ║  Port:       $PORT                          ║
-  ║  Log level:  $(printf '%-8s' "$LOG_LEVEL")                      ║
-  ║  Log file:   logs/$(basename "$SESSION_LOG")  ║
-  ║  Projects:   ${EMFI_PROJECTS_ROOT:-~/emfi-projects}$(printf '%*s' $((16 - ${#EMFI_PROJECTS_ROOT:-~/emfi-projects})) '')  ║
-  ╚══════════════════════════════════════════╝
+  EMFI Develop — starting up
+  ──────────────────────────
+  Port:       $PORT
+  Log level:  $LOG_LEVEL
+  Log file:   $SESSION_LOG
+  Projects:   $PROJECTS_PATH
+  venv:       ${VIRTUAL_ENV:-<none>}
 
-  Ctrl-C to stop.  Logs are also saved to:
-    $SESSION_LOG
+  Ctrl-C to stop.
 
 EOF
 
