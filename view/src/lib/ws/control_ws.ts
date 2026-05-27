@@ -1,21 +1,35 @@
 import { createLogger } from '../logger';
 import { CONTROL_URL, wsUrl } from '../config';
 import { armStore } from '../stores/arm';
+import { activeCampaign } from '../stores/campaign';
 import { countersStore } from '../stores/counters';
 import { devicesStore, type DeviceStatus } from '../stores/devices';
 import { logStore } from '../stores/log';
 import { positionStore } from '../stores/position';
+import { toasts } from '../stores/toast';
 
 const log = createLogger('control-ws');
+
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectDelay = 500;
+const MAX_RECONNECT = 5000;
 
 export function connect(): WebSocket {
   const url = wsUrl(CONTROL_URL);
   log.info(`connecting to ${url}`);
   const ws = new WebSocket(url);
 
-  ws.onopen = () => log.info('connected');
+  ws.onopen = () => {
+    log.info('connected');
+    toasts.info('Backend connected');
+    reconnectDelay = 500;
+  };
 
-  ws.onclose = (ev) => log.warn(`disconnected code=${ev.code} reason=${ev.reason || '(none)'}`);
+  ws.onclose = (ev) => {
+    log.warn(`disconnected code=${ev.code} reason=${ev.reason || '(none)'}`);
+    toasts.warn('Backend disconnected — reconnecting…');
+    scheduleReconnect();
+  };
 
   ws.onerror = () => log.error('connection error');
 
@@ -23,6 +37,11 @@ export function connect(): WebSocket {
     let msg: any;
     try { msg = JSON.parse(ev.data); } catch {
       log.error('failed to parse message', ev.data);
+      return;
+    }
+    if (msg.type === 'error') {
+      log.error('server error', msg);
+      toasts.error(msg.error ?? 'Unknown error', { where: msg.where });
       return;
     }
     if (msg.type !== 'event') {
@@ -51,6 +70,11 @@ export function connect(): WebSocket {
         break;
       case 'campaign_progress':
         log.debug('campaign progress', msg.payload);
+        activeCampaign.set(msg.payload);
+        break;
+      case 'error':
+        log.error('error event', msg.payload);
+        toasts.error(msg.payload?.error ?? 'Unknown error', { where: msg.payload?.where });
         break;
       default:
         log.warn(`unknown topic: ${msg.topic}`, msg.payload);
@@ -58,4 +82,13 @@ export function connect(): WebSocket {
     }
   };
   return ws;
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT);
+    connect();
+  }, reconnectDelay);
 }

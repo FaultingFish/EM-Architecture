@@ -76,3 +76,35 @@ export async function getCampaign(id: string) {
 export async function stopCampaign(id: string) {
   return request('POST', `/campaigns/${id}/stop`);
 }
+
+export async function moveRel(axis: string, distance: number) {
+  return request('POST', '/motion/move_rel', { axis, distance });
+}
+
+export async function home() {
+  return request('POST', '/motion/home');
+}
+
+export async function connectDevice(id: string, port?: string) {
+  return request('POST', `/devices/${id}/connect`, port ? { port } : undefined);
+}
+
+export async function shouterConfig(params: Record<string, unknown>) {
+  return request('POST', '/shouter/config', params);
+}
+
+export async function shouterPulse() {
+  return request('POST', '/shouter/pulse');
+}
+
+export async function shouterArm() {
+  return request('POST', '/shouter/arm');
+}
+
+export async function shouterDisarm() {
+  return request('POST', '/shouter/disarm');
+}
+
+export async function listCampaigns() {
+  return request('GET', '/campaigns');
+}

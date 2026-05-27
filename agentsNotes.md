@@ -19,7 +19,9 @@ Read these before you do anything substantive. When they disagree, the higher-pr
 1. **The plan file**: `/Users/sglombic/.claude/plans/i-am-looking-for-wiggly-quill.md` — the authoritative architecture plan and scope.
 2. **`ARCHITECTURE.md`** — system design, rationale, carry-forward catalog.
 3. **`<app>/SPEC.md`** — the contract for that specific app.
-4. **`old-em-setup/HANDOFF.md`** — bug history. The fixes in this file are why the new code looks the way it does. If you find yourself "improving" a piece of carry-forward code, check this first.
+4. **`<app>/setup.md`** — deployment-specific facts (lab box, pinned device paths, library quirks). Read this if you're touching anything that runs on the real rig.
+5. **`agentConversation.md`** (repo root) — shared inter-session channel. Scan it at the start of every session for messages addressed to your app.
+6. **`old-em-setup/HANDOFF.md`** — bug history. The fixes in this file are why the new code looks the way it does. If you find yourself "improving" a piece of carry-forward code, check this first.
 
 User-facing docs (you don't usually maintain these unless asked): `README.md`, `INSTALL.md`, `DOCS.md`.
 

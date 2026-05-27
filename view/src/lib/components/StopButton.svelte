@@ -1,13 +1,13 @@
 <script lang="ts">
-  // Panic stop. Also listens for Esc / Space globally.
-  // TODO: pass campaign_id to scope the stop; track active campaign in a store.
   import { onMount } from 'svelte';
 
   export let onStop: () => void = () => {};
 
   onMount(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === ' ') {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
+      if (e.key === 'Escape') {
         e.preventDefault();
         onStop();
       }
@@ -17,17 +17,22 @@
   });
 </script>
 
-<button on:click={onStop}>STOP</button>
+<button class="stop-btn" on:click={onStop}>STOP</button>
 
 <style>
-  button {
-    padding: 1rem 2rem;
-    background: #c00;
+  .stop-btn {
+    padding: 0.6rem 1.5rem;
+    background: var(--err);
     color: #fff;
-    border: none;
+    border: 2px solid #d32f2f;
     font-weight: 800;
-    font-size: 1.2rem;
-    border-radius: 0.5rem;
+    font-size: 14px;
+    border-radius: var(--radius);
     cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transition: background 0.15s;
   }
+  .stop-btn:hover { background: #d32f2f; }
+  .stop-btn:active { background: #b71c1c; }
 </style>
