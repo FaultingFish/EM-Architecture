@@ -56,21 +56,41 @@ def _toolchain_version(binary: str) -> str:
         return "not-found"
 
 
+_SHA_INCLUDE_SUFFIXES = frozenset({
+    ".c", ".h", ".cpp", ".hpp", ".s", ".S", ".asm",
+    ".rs", ".ld", ".syscfg",
+})
+
+_SHA_INCLUDE_BASENAMES = frozenset({
+    "Makefile", "makefile", "Cargo.toml", "Cargo.lock",
+    "linker.ld", "project.toml", ".cproject",
+})
+
+_SHA_SKIP_DIRS = frozenset({
+    ".git", "builds", "Debug", ".settings", ".clangd",
+    "__pycache__", "node_modules", ".svelte-kit", "target", "host",
+})
+
+
 def compute_sha(proj_dir: Path) -> str:
-    """Deterministic hash of (source tree + toolchain versions)."""
+    """Deterministic hash of (source files + toolchain versions).
+
+    Layout-agnostic: hashes any file whose suffix or basename matches
+    the include sets, skipping build-output and metadata directories.
+    """
     h = hashlib.sha256()
 
-    src = proj_dir / "src"
-    if src.exists():
-        for f in sorted(src.rglob("*")):
-            if f.is_file():
-                h.update(str(f.relative_to(proj_dir)).encode())
-                h.update(f.read_bytes())
+    for f in sorted(proj_dir.rglob("*")):
+        if not f.is_file():
+            continue
 
-    for extra in ["Makefile", "Cargo.toml", "linker.ld", "project.toml"]:
-        p = proj_dir / extra
-        if p.exists():
-            h.update(p.read_bytes())
+        rel = f.relative_to(proj_dir)
+        if any(part in _SHA_SKIP_DIRS for part in rel.parts):
+            continue
+
+        if f.suffix in _SHA_INCLUDE_SUFFIXES or f.name in _SHA_INCLUDE_BASENAMES:
+            h.update(str(rel).encode())
+            h.update(f.read_bytes())
 
     lang = _read_language(proj_dir)
     if lang == "c":
