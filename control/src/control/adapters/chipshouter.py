@@ -1,22 +1,36 @@
 """ChipSHOUTER (EMFI pulse source) adapter.
 
-Wraps the `chipshouter` pip package.
+Wraps the ``chipshouter`` pip package. The library exposes most controls
+as properties with getters/setters on a ``ChipSHOUTER(comport)`` instance.
 
-Critical invariants:
-- arm() MUST be idempotent (check state before sending cmd_arm). The
-  upstream library raises Firmware_State_Exception if you arm twice;
-  this was a bug fixed in the old setup (HANDOFF.md).
-- wait_for_arm MUST have a timeout. The upstream library can hang
-  forever if HV doesn't come up (HANDOFF "Worker hang").
-- disarm_safe() — catch all exceptions and disarm anyway.
+Critical invariants (from old-em-setup/HANDOFF.md):
+- ``arm()`` MUST be idempotent. The upstream ``armed = True`` calls
+  ``cmd_arm()`` which raises ``Firmware_State_Exception`` if already armed.
+- ``arm()`` MUST have a timeout. ``wait_for_arm()`` blocks indefinitely
+  if HV doesn't come up.
+- ``disarm_safe()`` must never raise.
 
-Reference: old EMFI_Interfacing/ submodule ChipSHOUTERAdapter, plus
-old-em-setup/HANDOFF.md sections on shouter bugs.
+Library API surface (confirmed by probe):
+    ChipSHOUTER(comport)
+    .state (property, read-only) -> str
+    .voltage (property, settable) -> int
+    .pulse (property, settable) -> triggers pulse when set to True
+    .armed (property, settable) -> calls cmd_arm/cmd_disarm
+    .mute (property, settable) -> bool
+    .arm_timeout (property, settable) -> int (minutes)
+    .faults_current (property, settable)
+    .faults_latched (property, read-only)
+    .hwtrig_mode (property, settable)
+    .hwtrig_term (property, settable)
+    .wait_for_arm(timeout=3) -> blocks until armed
+    .disconnect()
+    .clr_armed (property) -> clears faults then arms
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, List, Optional
 
 from control.adapters.base import BaseAdapter
@@ -29,16 +43,43 @@ class ChipShouterAdapter(BaseAdapter):
 
     def __init__(self) -> None:
         self._impl = None
+        self._port: Optional[str] = None
+        self._last_error: Optional[str] = None
 
     def connect(self, port: Optional[str] = None) -> None:
-        raise NotImplementedError("ChipShouterAdapter.connect")
+        if port is None:
+            raise ValueError("chipshouter: no serial port specified")
+        try:
+            from chipshouter import ChipSHOUTER
+        except ImportError as exc:
+            self._last_error = f"chipshouter library not installed: {exc}"
+            raise RuntimeError(self._last_error) from exc
+
+        LOGGER.info("ChipSHOUTER connecting on %s", port)
+        self._impl = ChipSHOUTER(port)
+        self._port = port
+        self._last_error = None
+        state = str(self._impl.state)
+        LOGGER.info("ChipSHOUTER connected — state: %s, voltage: %s",
+                     state, self._impl.voltage)
 
     def disconnect(self) -> None:
-        raise NotImplementedError("ChipShouterAdapter.disconnect")
+        if self._impl is not None:
+            LOGGER.info("ChipSHOUTER disconnecting")
+            try:
+                self._impl.disconnect()
+            except Exception as exc:
+                LOGGER.warning("ChipSHOUTER disconnect error: %s", exc)
+            self._impl = None
+            self._port = None
 
     @property
     def connected(self) -> bool:
         return self._impl is not None
+
+    def _require_connected(self) -> None:
+        if self._impl is None:
+            raise RuntimeError("ChipSHOUTER is not connected")
 
     def configure(
         self,
@@ -49,27 +90,76 @@ class ChipShouterAdapter(BaseAdapter):
         arm_timeout_min: int = 1,
         mute: bool = True,
     ) -> None:
-        raise NotImplementedError("ChipShouterAdapter.configure")
+        self._require_connected()
+        self._impl.voltage = voltage
+        self._impl.pulse.repeat = pulse_repeat
+        self._impl.pulse.width = pulse_width_ns
+        self._impl.pulse.deadtime = pulse_deadtime_ms * 1000
+        self._impl.arm_timeout = arm_timeout_min
+        self._impl.mute = mute
+        LOGGER.info("ChipSHOUTER configured: V=%d width=%dns repeat=%d mute=%s",
+                     voltage, pulse_width_ns, pulse_repeat, mute)
 
     def arm(self, clear_faults: bool = False, timeout_s: float = 5.0) -> None:
-        """Idempotent. No-op if already armed. Times out if HV stalls."""
-        raise NotImplementedError("ChipShouterAdapter.arm")
+        """Idempotent arm with timeout. No-op if already armed."""
+        self._require_connected()
+        state = str(self._impl.state).lower()
+
+        if "fault" in state:
+            LOGGER.warning("ChipSHOUTER in fault state (%s), clearing", state)
+            self._impl.faults_current = 0
+            time.sleep(0.1)
+            state = str(self._impl.state).lower()
+
+        if "armed" in state:
+            LOGGER.debug("ChipSHOUTER already armed, skipping")
+            return
+
+        LOGGER.info("ChipSHOUTER arming (timeout=%.1fs)", timeout_s)
+        self._impl.armed = True
+
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            s = str(self._impl.state).lower()
+            if "armed" in s:
+                LOGGER.info("ChipSHOUTER armed")
+                return
+            time.sleep(0.1)
+
+        raise RuntimeError(
+            f"ChipSHOUTER failed to arm within {timeout_s}s "
+            f"(state: {self._impl.state})"
+        )
 
     def disarm(self) -> None:
-        raise NotImplementedError("ChipShouterAdapter.disarm")
+        self._require_connected()
+        LOGGER.info("ChipSHOUTER disarming")
+        self._impl.armed = False
 
     def disarm_safe(self) -> None:
         """Best-effort disarm — never raises."""
+        if self._impl is None:
+            return
         try:
-            self.disarm()
-        except Exception:
-            pass
+            state = str(self._impl.state).lower()
+            if "armed" not in state:
+                return
+            self._impl.armed = False
+            LOGGER.info("ChipSHOUTER disarmed (safe)")
+        except Exception as exc:
+            LOGGER.warning("disarm_safe swallowed: %s", exc)
 
     def pulse(self) -> None:
-        raise NotImplementedError("ChipShouterAdapter.pulse")
+        self._require_connected()
+        self._impl.pulse = True
 
     def get_state(self) -> str:
-        raise NotImplementedError("ChipShouterAdapter.get_state")
+        self._require_connected()
+        return str(self._impl.state)
 
     def get_fault_active(self) -> List[Any]:
-        raise NotImplementedError("ChipShouterAdapter.get_fault_active")
+        self._require_connected()
+        faults = self._impl.faults_current
+        if faults:
+            return [str(faults)]
+        return []

@@ -3,6 +3,16 @@ import { CONTROL_URL } from '../config';
 
 const log = createLogger('control-api');
 
+export class ApiError extends Error {
+  status: number;
+  body: any;
+  constructor(message: string, status: number, body: any) {
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
+
 async function request(method: string, path: string, body?: unknown) {
   const url = `${CONTROL_URL}${path}`;
   log.info(`${method} ${path}`);
@@ -14,9 +24,10 @@ async function request(method: string, path: string, body?: unknown) {
     }
     const r = await fetch(url, opts);
     if (!r.ok) {
-      const text = await r.text().catch(() => '');
-      log.error(`${method} ${path} => ${r.status}`, text);
-      throw new Error(`Control ${method} ${path} failed: ${r.status}`);
+      let parsed: any = null;
+      try { parsed = await r.json(); } catch { /* not JSON */ }
+      log.error(`${method} ${path} => ${r.status}`, parsed);
+      throw new ApiError(`Control ${method} ${path} failed: ${r.status}`, r.status, parsed);
     }
     const data = await r.json();
     log.debug(`${method} ${path} => 200`, data);

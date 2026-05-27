@@ -3,7 +3,7 @@
   import SweepConfig from '$lib/components/SweepConfig.svelte';
   import GridConfig from '$lib/components/GridConfig.svelte';
   import { listProjects } from '$lib/api/develop';
-  import { startCampaign } from '$lib/api/control';
+  import { startCampaign, ApiError } from '$lib/api/control';
   import { toasts } from '$lib/stores/toast';
   import { onMount } from 'svelte';
 
@@ -11,13 +11,16 @@
   let selectedProject = '';
   let selectedVersion = '';
   let campaignName = '';
+  let loading = false;
+  let showAdvanced = false;
+  let showPreview = false;
+
   let triggerMode = 'software';
   let shouterVoltage = 250;
   let shouterPulseWidth = 80;
   let verdictTimeout = 500;
   let shouterMute = true;
   let shouterAutoArm = true;
-  let loading = false;
 
   let sweep = {
     delay_us: null as { start: number; stop: number; step: number } | null,
@@ -37,36 +40,69 @@
 
   onMount(async () => {
     try {
-      projects = await listProjects();
+      const result = await listProjects();
+      projects = Array.isArray(result) ? result : result?.projects ?? [];
     } catch {
       toasts.warn('Could not load projects from Develop');
     }
   });
 
   $: versions = projects.find((p: any) => p.id === selectedProject)?.versions ?? [];
+  $: canSubmit = campaignName.trim() !== '' && selectedProject !== '';
+
+  function buildBody(): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      name: campaignName.trim(),
+      project_id: selectedProject,
+      grid: {
+        origin: grid.origin,
+        top_right: grid.top_right,
+        step_size_mm: grid.step_size_mm,
+        z_min_mm: grid.z_min_mm,
+        z_max_mm: grid.z_max_mm,
+        z_step_mm: grid.z_step_mm,
+      },
+      sweep: {
+        delay_us: sweep.delay_us,
+        pulse_width_ns: sweep.pulse_width_ns,
+        voltage_v: sweep.voltage_v,
+        attempts_per_point: sweep.attempts_per_point,
+      },
+      trigger_mode: triggerMode,
+      shouter_voltage: shouterVoltage,
+      shouter_pulse_width_ns: shouterPulseWidth,
+      verdict_timeout_ms: verdictTimeout,
+      shouter_mute: shouterMute,
+      shouter_auto_arm: shouterAutoArm,
+    };
+    if (selectedVersion) body.project_version = selectedVersion;
+    return body;
+  }
+
+  $: previewJson = canSubmit ? JSON.stringify(buildBody(), null, 2) : '{}';
 
   async function submit() {
-    if (!campaignName) { toasts.warn('Enter a campaign name'); return; }
+    if (!canSubmit) return;
     loading = true;
     try {
-      const body = {
-        name: campaignName,
-        project_id: selectedProject || undefined,
-        project_version: selectedVersion || undefined,
-        grid,
-        sweep,
-        trigger_mode: triggerMode,
-        shouter_voltage: shouterVoltage,
-        shouter_pulse_width_ns: shouterPulseWidth,
-        verdict_timeout_ms: verdictTimeout,
-        shouter_mute: shouterMute,
-        shouter_auto_arm: shouterAutoArm,
-      };
-      const result = await startCampaign(body);
+      const result = await startCampaign(buildBody());
       toasts.info('Campaign started');
       if (result?.id) goto(`/campaign/${result.id}`);
-    } catch {
-      toasts.error('Failed to start campaign');
+    } catch (err) {
+      if (err instanceof ApiError && err.body?.detail) {
+        if (Array.isArray(err.body.detail)) {
+          for (const e of err.body.detail) {
+            const loc = Array.isArray(e.loc)
+              ? e.loc.filter((s: unknown) => s !== 'body').join('.')
+              : '?';
+            toasts.error(`${loc}: ${e.msg}`, { where: 'validation' });
+          }
+        } else {
+          toasts.error(String(err.body.detail));
+        }
+      } else {
+        toasts.error('Failed to start campaign');
+      }
     } finally {
       loading = false;
     }
@@ -81,13 +117,13 @@
       <div class="panel">
         <h3>Campaign</h3>
         <div class="field">
-          <label>Name</label>
-          <input type="text" bind:value={campaignName} placeholder="my-scan-01" />
+          <label for="camp-name">Name</label>
+          <input id="camp-name" type="text" bind:value={campaignName} placeholder="my-scan-01" />
         </div>
         <div class="field">
-          <label>Project</label>
-          <select bind:value={selectedProject}>
-            <option value="">— none —</option>
+          <label for="camp-project">Project</label>
+          <select id="camp-project" bind:value={selectedProject}>
+            <option value="">Select a project</option>
             {#each projects as p}
               <option value={p.id}>{p.name} ({p.language})</option>
             {/each}
@@ -95,9 +131,9 @@
         </div>
         {#if versions.length > 0}
           <div class="field">
-            <label>Version</label>
-            <select bind:value={selectedVersion}>
-              <option value="">latest</option>
+            <label for="camp-version">Version</label>
+            <select id="camp-version" bind:value={selectedVersion}>
+              <option value="">latest (HEAD)</option>
               {#each versions as v}
                 <option value={v}>{v}</option>
               {/each}
@@ -106,11 +142,16 @@
         {/if}
       </div>
 
-      <div class="panel">
-        <h3>Shouter</h3>
+      <GridConfig bind:value={grid} />
+      <SweepConfig bind:value={sweep} />
+    </div>
+
+    <div class="col">
+      <details class="panel" bind:open={showAdvanced}>
+        <summary><h3>Advanced</h3></summary>
         <div class="field">
-          <label>Trigger mode</label>
-          <select bind:value={triggerMode}>
+          <label for="camp-trigger">Trigger mode</label>
+          <select id="camp-trigger" bind:value={triggerMode}>
             <option value="software">Software</option>
             <option value="one-shot">One-shot</option>
             <option value="free-run">Free-run</option>
@@ -118,43 +159,78 @@
           </select>
         </div>
         <div class="field">
-          <label>Voltage (V)</label>
-          <input type="number" bind:value={shouterVoltage} min="0" max="500" />
+          <label for="camp-voltage">Voltage (V)</label>
+          <input id="camp-voltage" type="number" bind:value={shouterVoltage} min="0" max="500" />
         </div>
         <div class="field">
-          <label>Pulse width (ns)</label>
-          <input type="number" bind:value={shouterPulseWidth} min="1" />
+          <label for="camp-pulse">Pulse width (ns)</label>
+          <input id="camp-pulse" type="number" bind:value={shouterPulseWidth} min="1" />
         </div>
         <div class="field">
-          <label>Verdict timeout (ms)</label>
-          <input type="number" bind:value={verdictTimeout} min="10" />
+          <label for="camp-timeout">Verdict timeout (ms)</label>
+          <input id="camp-timeout" type="number" bind:value={verdictTimeout} min="10" />
         </div>
         <div class="field row">
           <label><input type="checkbox" bind:checked={shouterMute} /> Mute buzzer</label>
           <label><input type="checkbox" bind:checked={shouterAutoArm} /> Auto-arm</label>
         </div>
-      </div>
-    </div>
+      </details>
 
-    <div class="col">
-      <GridConfig bind:value={grid} />
-      <SweepConfig bind:value={sweep} />
+      <details class="panel" bind:open={showPreview}>
+        <summary><h3>Request preview</h3></summary>
+        <pre class="preview">{previewJson}</pre>
+      </details>
 
-      <button class="start-btn" on:click={submit} disabled={loading}>
+      <button class="start-btn" on:click={submit} disabled={!canSubmit || loading}>
         {loading ? 'Starting…' : 'Start Campaign'}
       </button>
+      {#if !canSubmit}
+        <p class="hint">Fill in name and select a project to enable submit.</p>
+      {/if}
     </div>
   </div>
 </div>
 
 <style>
-  .page { padding: 1rem 1.5rem; max-width: 900px; }
+  .page { padding: 1rem 1.5rem; max-width: 960px; }
   h2 { margin-bottom: 1rem; }
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
   .col { display: flex; flex-direction: column; gap: 0.75rem; }
   .field { display: flex; flex-direction: column; gap: 0.2rem; margin-bottom: 0.4rem; }
-  .field input[type="text"], .field select { width: 100%; }
+  .field input[type="text"], .field input[type="number"], .field select { width: 100%; }
   .field.row { flex-direction: row; gap: 1rem; }
+
+  details.panel { cursor: default; }
+  details.panel summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  details.panel summary::before {
+    content: '▶';
+    font-size: 9px;
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+  details[open].panel summary::before { transform: rotate(90deg); }
+  details.panel summary h3 { margin: 0; }
+  details.panel > :not(summary) { margin-top: 0.5rem; }
+
+  .preview {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--panel-2);
+    border-radius: var(--radius);
+    padding: 0.5rem;
+    max-height: 300px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
   .start-btn {
     padding: 0.6rem 1.5rem;
     background: var(--accent);
@@ -166,6 +242,8 @@
     cursor: pointer;
     margin-top: 0.5rem;
   }
-  .start-btn:hover { filter: brightness(1.1); }
-  .start-btn:disabled { opacity: 0.5; }
+  .start-btn:hover:not(:disabled) { filter: brightness(1.1); }
+  .start-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .hint { color: var(--muted); font-size: 11px; margin-top: 0.25rem; }
 </style>

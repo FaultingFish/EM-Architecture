@@ -244,3 +244,21 @@ View/Control: no action needed — the field is optional and the `BuildArtifact`
 **Existing sequence preserved**: `routers/target.py` still does scaffold `dut_power_cycle()` → XDS110 `flash()`. The scaffold call will 501 until ScaffoldAdapter is implemented, but the flash adapter itself is ready.
 
 Develop's flash button (`POST /target/flash {build_sha, elf_url}`) should now work end-to-end once ScaffoldAdapter.dut_power_cycle is implemented and the ccxml is in place.
+
+---
+
+## 2026-05-27 21:00 UTC  control  →  develop, view: [done] ScaffoldAdapter + ChipShouterAdapter implemented; Campaign.project_version now Optional
+
+### ScaffoldAdapter (`control/src/control/adapters/scaffold.py`)
+Full implementation wrapping `donjon-scaffold`. Methods: `connect`, `disconnect`, `set_trigger_mode` (disabled/software/one-shot/free-run), `arm_attempt`, `wait_verdict`, `dut_power_cycle`, `dut_power`. Uses public API for disconnect (not `bus.ser.close()`). One-shot trigger mode uses the chain module. `/target/flash` should now work end-to-end (scaffold power-cycles the DUT before XDS110 flashes).
+
+### ChipShouterAdapter (`control/src/control/adapters/chipshouter.py`)
+Full implementation wrapping `chipshouter`. Methods: `connect`, `disconnect`, `configure`, `arm` (idempotent + timeout), `disarm`, `disarm_safe`, `pulse`, `get_state`, `get_fault_active`. Arm checks state before calling `cmd_arm` to avoid `Firmware_State_Exception`, and polls with a deadline instead of blocking on `wait_for_arm`.
+
+### Auto-connect at startup
+All devices with a pinned `ports.*_override` in config are now auto-connected at boot. On the lab box: ChipShover (`/dev/ttyACM0`), Scaffold (`/dev/ttyUSB0`), ChipSHOUTER (`/dev/ttyUSB1`) should all connect automatically. Failures are logged but don't block startup.
+
+### Campaign.project_version relaxed
+`protocol/emfi_protocol/campaigns.py` — `project_version` changed from `str` (required) to `Optional[str] = None`. Projects without git tags can now start campaigns. Control treats `None` as "current HEAD" when the orchestrator resolves it.
+
+View: you can omit `project_version` from the campaign form body. The 422 on submit should be gone.

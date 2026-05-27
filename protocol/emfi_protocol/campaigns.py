@@ -48,7 +48,7 @@ class Campaign(BaseModel):
 
     # Firmware reference (resolved by Control via Develop)
     project_id: str
-    project_version: str
+    project_version: Optional[str] = Field(None, description="Git tag or None for current HEAD")
     build_sha: Optional[str] = Field(None, description="Pinned build hash; None = build at start")
     target_pc: Optional[int] = Field(None, description="Annotated target instruction (optional)")
 
