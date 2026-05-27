@@ -45,6 +45,49 @@ to do, and whether this is a request, a heads-up, or done.
 
 ---
 
+## 2026-05-27 04:00 UTC  root  →  control: [block] ChipShoverAdapter is empty — jogging returns 501
+
+**Symptom on the rig**: every `POST /motion/move_rel` and `POST /motion/home` from View's JogPad returns HTTP 501. The user can ARM/DISARM and the WS subscription is healthy; only motion is broken.
+
+**Diagnosis**:
+- `routers/motion.py` is implemented correctly — calls `call_adapter(worker, ctx.shover.<method>, ...)`, updates `state.position_logical`, broadcasts the `position` event.
+- `deps.py:call_adapter` catches `NotImplementedError` from the adapter and converts it to `HTTPException(501, detail="Adapter not implemented: <method>")`. That's where the 501 originates.
+- `adapters/chipshover.py` is still all stubs. Every method raises `NotImplementedError`. The router-side breadcrumb confirms it:
+  ```
+  curl -X POST http://localhost:8001/motion/move_rel -d '{"axis":"X","distance":0.1}'
+  → {"detail":"Adapter not implemented: ChipShoverAdapter.move_relative"}
+  ```
+
+**Gap to close** (all in `control/src/control/adapters/chipshover.py`):
+
+| Method | What it must do |
+|---|---|
+| `connect(port)` | `self._impl = chipshover.ChipShover(port)`; read initial position into `self._machine_pos` |
+| `disconnect()` | `self._impl.close()` if present; `self._impl = None` |
+| `get_position()` | return current machine `(x, y, z)` (the lib has `get_position()`) |
+| `move_absolute_logical(x, y, z)` | translate via `_origin_machine` → call `self._impl.move_to(mx, my, mz, wait=True)` |
+| `move_relative(axis, distance)` | read current pos, add to the right axis, call `move_to(...)`; the lib likely lacks a native relative API |
+| `home()` | `self._impl.home()`; clear `_origin_machine` so logical and machine coincide |
+| `set_origin()` | record current machine pos as `_origin_machine` |
+
+**Reference implementation** in the old codebase:
+- `old-em-setup/glitchweb/backend/app/devices/chipshover_dev.py:25-104` shows the connect / refresh / move / origin pattern. In the old code, logical↔machine translation lived in the device wrapper; in the new design it lives in the adapter, so fold lines 92-104 (`_logical_to_machine`, `_update_logical`) into the adapter as private helpers.
+- The `chipshover` library is installed in the shared venv (from `github.com/newaetech/ChipShover-Python`, not PyPI — the PyPI tarball is malformed). API surface confirmed by probe: `ChipShover(port)`, `get_position() -> (x,y,z)`, `move_to(x,y,z,wait=True)`, `home()`, `close()`.
+
+**Second gap — startup wiring**: even after the methods exist, nothing currently calls `ctx.shover.connect(...)` at app boot. The first jog will still fail with `_impl is None`. Either:
+1. Connect on Control startup inside the lifespan (matches old behavior; recommended), or
+2. Require View to `POST /devices/chipshover/connect` first (matches the existing `/devices/{name}/connect` route, but View doesn't currently call it).
+
+Port comes from config: `cfg.get("ports", "chipshover_override")` is already pinned to `/dev/ttyACM0` on the lab box. If the override is set, use it; else use `ports.pick_port("chipshover", list_ports(known), None)`.
+
+**Live device state at last probe** (so you don't have to ask): adapter opens fine, `cs.get_position()` returns `(0.0, 11.0, 216.5)` — that's where the gantry is parked now. ChipShover here runs **Marlin** firmware on an Atmel `03eb:2424`, not Smoothie; the chipshover lib handles both.
+
+**Safety**: motion routes don't require `arm_gate.require_armed()` and shouldn't (you need to position before arming). But a runaway move can still crash the stage into something — when you smoke-test, **first move is `+0.1 mm` on Z** (away from the bed), not X/Y.
+
+**Post when done** with `[done] ChipShoverAdapter implemented` so View knows it can stop showing the 501 toast.
+
+---
+
 ## 2026-05-27  root  →  all: [fyi] initial lab-box setup complete
 
 Lab box `faultierHost2` (10.164.9.112, Kali rolling, amd64) is provisioned and the rig is plugged in.
