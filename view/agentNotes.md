@@ -4,38 +4,99 @@
 
 Pure SvelteKit static app (port 8003). No backend. Talks to Control (:8001) and Develop (:8002) over HTTP + WebSocket. It's the unified dashboard for the EMFI research rig — campaign control, live telemetry, heatmaps, assembly viewing, logbook.
 
-## Current state (post-audit)
+## Current state (fully implemented)
 
-The scaffold is spec-complete. Every route, component, store, API client, and WS handler that SPEC.md commits to exists. Most components are stubs with TODO bodies — they have the right props/interfaces but don't render full UI yet.
+All pages, components, stores, and API clients are implemented with working UI matching the old glitchweb frontend's dark theme and feature set. The app type-checks clean (0 errors) and builds to static output.
 
-### What was added in the audit pass
+### Dark theme
 
-- `src/lib/stores/devices.ts` — was missing entirely from the scaffold
-- `device_status` + `campaign_progress` WS topic handlers in `control_ws.ts`
-- `devices()`, `getCampaign()`, `stopCampaign()` in `control.ts` API client
-- Mission control page now uses ArmButton, DeviceStatusCard, LogTail components (was rendering inline)
-- Layout now shows auto-disarm countdown + floating StopButton
-- `src/lib/logger.ts` — structured client-side logging utility
-- Logging wired into both API clients and both WS connections
-- `start.sh` — startup script with log tee to `logs/` directory
+CSS custom properties in `src/app.css` match the old glitchweb palette:
+- `--bg: #0e0f12`, `--panel: #161922`, `--panel-2: #1e2230`
+- `--accent: #00d18f` (teal), `--warn: #f9a825`, `--err: #ff5252`, `--ok: #00c853`
+- System UI font stack, monospace for data displays
 
-### What still needs implementation (V1 scope)
+### What was built
 
-1. **Scene3D.svelte** — Three.js scene init, positionStore subscription, click-to-jog raycasting
-2. **Heatmap.svelte** — canvas rendering of `{x, y, count}[]` cells with color scale
-3. **SweepConfig.svelte / GridConfig.svelte** — actual numeric input fields, validation against emfi_protocol shapes
-4. **Campaign page** (`/campaign`) — project picker (Develop API), target picker, grid+sweep config, submit to Control
-5. **Live campaign page** (`/campaign/[id]`) — progress bar, Scene3D, filtered LogTail
-6. **Runs page** (`/runs`) — filter form, attempt table, replay button
-7. **Assembly page** (`/assembly`) — project/build picker, Monaco-based assembly viewer, target click
-8. **WS reconnect** — exponential backoff on disconnect (noted in TODOs)
-9. **Active campaign store** — StopButton currently passes `'current'` as placeholder campaign ID
+**Layout & topbar** (`+layout.svelte`):
+- Dark header with nav links, device status lights, arm button + arm state indicator with countdown, stop button
+- Active page highlighting in nav
+- Toast notification system (bottom-right, auto-dismiss)
 
-### Known limitations
+**Mission control** (`/`, three-column layout like old glitchweb):
+- Left sidebar: position readout, jog pad (XY + Z), campaign progress bar
+- Center: full Three.js 3D scene with probe, grid, axes, attempt trail, scan box, orbit controls, double-click-to-jog
+- Right sidebar: counter panel (attempts/faults/hangs/crashes/nothings/campaigns/success%), logbook table with filtering and click-to-highlight
 
-- **openapi-typescript types not generated** — API clients are hand-rolled. The `protocol/openapi/*.yaml` files don't exist yet (they're generated from the running FastAPI apps). Once Control and Develop are running, generate types with the commands in SPEC.md.
-- **No tests** — View is a pure frontend app; the spec doesn't call for tests. Consider Playwright e2e tests once the backends are up.
-- **StopButton keyboard shortcut (Space)** — will interfere with normal typing in input fields on the campaign config page. Needs scoping so it only fires when no input is focused, or switch to a modifier combo.
+**Campaign config** (`/campaign`):
+- Project picker (from Develop), version selector
+- Shouter config: trigger mode, voltage, pulse width, verdict timeout, mute, auto-arm
+- Grid config: origin/top-right with "use current position" buttons, step size, Z range
+- Sweep config: toggleable delay/pulse/voltage ranges with start/stop/step, attempts per point
+- Start button → POST /campaigns → redirect to live view
+
+**Live campaign** (`/campaign/[id]`):
+- Progress bar from campaign_progress WS topic
+- Scene3D + LogTail side by side
+- Campaign config dump, stop button
+
+**Runs browser** (`/runs`):
+- Outcome and campaign filters
+- Full table: time, outcome, XYZ, delay, width, voltage, elapsed
+- Click row for details, replay button per row
+
+**Heatmap** (`/heatmap`):
+- Z slider, campaign filter, refresh
+- Canvas rendering with blue→green→yellow→red color scale
+- Hover tooltip showing (x, y, count)
+- Axis labels
+
+**Assembly viewer** (`/assembly`):
+- Project picker, build SHA input
+- Disassembly table: PC, bytes, mnemonic+operands, function, source location
+- Syntax coloring (teal mnemonics, amber functions)
+- Filter by mnemonic/function/PC
+- Target-annotated rows highlighted in accent
+
+### Components
+
+| Component | Status |
+|---|---|
+| `ArmButton.svelte` | Hold-to-arm with progress bar fill animation, amber/red states |
+| `StopButton.svelte` | Red, Esc shortcut (scoped: skips input/textarea/select focus) |
+| `Scene3D.svelte` | Full Three.js: probe cone, XY grid, axes, outcome point trails (4 colors), scan box wireframe, highlight ring, orbit controls, double-click-to-jog via raycasting |
+| `Heatmap.svelte` | Canvas rendering with color scale, hover tooltip, axis labels |
+| `LogTail.svelte` | Table with sticky header, outcome filter dropdown, outcome coloring, click-to-select, auto-scroll |
+| `DeviceStatusCard.svelte` | Compact inline badge: status dot (green/red/gray), name, port, busy indicator |
+| `SweepConfig.svelte` | Toggleable range inputs for delay/pulse/voltage, attempts per point |
+| `GridConfig.svelte` | Origin/top-right with "use current position", step size, Z range, area display |
+| `Toast.svelte` | Fixed bottom-right, level-colored left border, auto-dismiss, click to close |
+| `JogPad.svelte` | Plus-shaped XY grid + Z column, step size input, home button |
+| `CounterPanel.svelte` | Styled counter rows with outcome colors, success percentage |
+| `ProgressBar.svelte` | Animated fill bar with value/max label |
+
+### Stores
+
+| Store | Purpose |
+|---|---|
+| `arm.ts` | Arm state from WS |
+| `position.ts` | XYZ position from WS |
+| `counters.ts` | Attempt outcome counters from WS |
+| `devices.ts` | Map<name, DeviceStatus> from WS |
+| `log.ts` | AttemptEntry[] (capped at 200) from WS |
+| `campaign.ts` | Active campaign progress from WS |
+| `toast.ts` | Toast notification queue |
+
+### API clients
+
+**control.ts** (19 functions): armState, arm, disarm, moveAbs, moveRel, home, startCampaign, listCampaigns, getCampaign, stopCampaign, listRuns, heatmap, replay, devices, connectDevice, shouterConfig, shouterPulse, shouterArm, shouterDisarm
+
+**develop.ts** (5 functions): listProjects, getProject, listBuilds, disassembly, listTargets
+
+### WS
+
+**control_ws.ts**: auto-reconnect with exponential backoff (500ms → 5s cap), dispatches 7 topics (position, arm, counter, attempt, device_status, campaign_progress, error), toast on connect/disconnect/error
+
+**develop_ws.ts**: on-demand connection with connect/disconnect/error logging
 
 ## File map
 
@@ -47,59 +108,74 @@ view/
   svelte.config.js                      # adapter-static, fallback to index.html
   vite.config.ts                        # proxy /control→:8001, /develop→:8002
   tsconfig.json
+  SPEC.md                               # API contract & requirements
+  AUDIT.md                              # scaffold audit report
   src/
     app.html
+    app.css                             # dark theme (matches old glitchweb palette)
     routes/
-      +layout.svelte                    # nav, arm indicator + countdown, floating StopButton
-      +page.svelte                      # mission control (ArmButton, position, counters, devices, log)
-      campaign/+page.svelte             # campaign config form (stub)
-      campaign/[id]/+page.svelte        # live campaign view (stub)
-      runs/+page.svelte                 # logbook browser (stub)
-      heatmap/+page.svelte              # 2D fault density (stub)
-      assembly/+page.svelte             # assembly viewer (stub)
+      +layout.svelte                    # topbar, device lights, arm indicator, nav, toast
+      +page.svelte                      # mission control (3-column: jog|scene|counters+log)
+      campaign/+page.svelte             # campaign config form (project, shouter, grid, sweep)
+      campaign/[id]/+page.svelte        # live campaign (progress, scene, log, config)
+      runs/+page.svelte                 # logbook browser (filter, table, replay, detail)
+      heatmap/+page.svelte              # heatmap (Z slider, canvas, tooltip)
+      assembly/+page.svelte             # assembly viewer (project picker, disassembly table)
     lib/
       config.ts                         # CONTROL_URL, DEVELOP_URL, wsUrl()
       logger.ts                         # structured logging: createLogger(category)
       api/
-        control.ts                      # 11 functions wrapping Control REST endpoints
+        control.ts                      # 19 functions wrapping Control REST endpoints
         develop.ts                      # 5 functions wrapping Develop REST endpoints
       ws/
-        control_ws.ts                   # always-on WS, dispatches 6 topics to stores
+        control_ws.ts                   # always-on WS with auto-reconnect, 7 topics
         develop_ws.ts                   # on-demand WS for build/agent streaming
       stores/
-        arm.ts                          # { armed, auto_disarm_seconds, seconds_until_auto_disarm }
-        position.ts                     # { x, y, z, machine_x?, machine_y?, machine_z? }
-        counters.ts                     # { attempts, glitches, hangs, crashes, nothings, campaigns }
+        arm.ts                          # arm state
+        position.ts                     # XYZ position
+        counters.ts                     # outcome counters
         devices.ts                      # Map<name, DeviceStatus>
         log.ts                          # AttemptEntry[] (capped at 200)
+        campaign.ts                     # active campaign progress
+        toast.ts                        # toast notification queue
       components/
-        ArmButton.svelte                # hold-to-arm (1000ms), touch+keyboard
-        StopButton.svelte               # big red, Esc/Space global shortcut
-        Scene3D.svelte                  # Three.js (stub)
-        Heatmap.svelte                  # 2D canvas (stub)
-        LogTail.svelte                  # append-only attempt list, outcome colors
-        DeviceStatusCard.svelte         # per-device status card
-        SweepConfig.svelte              # sweep range inputs (stub)
-        GridConfig.svelte               # grid extent inputs (stub)
+        ArmButton.svelte                # hold-to-arm with progress fill
+        StopButton.svelte               # red stop, Esc shortcut
+        Scene3D.svelte                  # Three.js (probe, grid, trails, click-to-jog)
+        Heatmap.svelte                  # 2D canvas with color scale + tooltip
+        LogTail.svelte                  # table with filter, outcome colors, click-select
+        DeviceStatusCard.svelte         # inline device badge with status dot
+        SweepConfig.svelte              # toggleable sweep range inputs
+        GridConfig.svelte               # grid inputs with "use position" buttons
+        Toast.svelte                    # notification toasts
+        JogPad.svelte                   # XYZ jog buttons + home
+        CounterPanel.svelte             # styled counter display
+        ProgressBar.svelte              # animated progress bar
 ```
 
 ## How to run
 
 ```bash
-# Dev (hot reload)
-./start.sh dev
-
-# Production preview
-./start.sh preview
-
-# Custom port
-./start.sh dev 3000
+./start.sh dev          # dev with hot reload on :8003
+./start.sh preview      # production build + preview on :8003
+./start.sh dev 3000     # custom port
 ```
 
-Logs go to `logs/view-YYYYMMDD-HHMMSS.log` and are also printed to the terminal.
+## What's needed from Control and Develop
 
-## Dependencies on other apps
+The View UI is complete and will render its shell regardless of backend availability. When the backends come online, these endpoints need to work:
 
-- **Control (:8001)** — all runtime data. If Control is down, the WS won't connect and API calls will log network errors, but the app shell still renders.
-- **Develop (:8002)** — project list, builds, disassembly. Only needed for `/campaign` and `/assembly` pages.
-- **protocol/** — not a runtime dependency (View is pure JS). The protocol package defines the Pydantic models that generate the OpenAPI specs that would generate the TypeScript types.
+**Control (:8001)**:
+- `GET /arm_state`, `POST /arm`, `POST /disarm`
+- `GET /devices`, `POST /devices/{id}/connect`
+- `POST /motion/move_abs`, `POST /motion/move_rel`, `POST /motion/home`
+- `POST /shouter/config`, `POST /shouter/pulse`, `POST /shouter/arm`, `POST /shouter/disarm`
+- `POST /campaigns`, `GET /campaigns`, `GET /campaigns/{id}`, `POST /campaigns/{id}/stop`
+- `GET /runs?outcome=&campaign=`, `GET /heatmap?z=&campaign=`, `POST /replay/{id}`
+- `WS /ws` — topics: position, arm, counter, attempt, device_status, campaign_progress, error
+
+**Develop (:8002)**:
+- `GET /projects`, `GET /projects/{id}`
+- `GET /projects/{id}/builds`
+- `GET /projects/{id}/builds/{sha}/disassembly`
+- `GET /projects/{id}/targets`

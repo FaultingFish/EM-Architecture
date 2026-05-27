@@ -30,6 +30,11 @@ Thumbs.db
 .env
 .env.local
 
+# Runtime artifacts
+*.log
+develop/logs/
+control/logs/
+
 # Generated artifacts (intentionally not generated until apps are built out)
 protocol/openapi/control.yaml
 protocol/openapi/develop.yaml

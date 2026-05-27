@@ -42,5 +42,14 @@ class ChipShoverAdapter(BaseAdapter):
     def move_absolute_logical(self, x: float, y: float, z: float) -> None:
         raise NotImplementedError("ChipShoverAdapter.move_absolute_logical")
 
+    def move_relative(self, axis: str, distance: float) -> None:
+        raise NotImplementedError("ChipShoverAdapter.move_relative")
+
     def get_position(self) -> tuple[float, float, float]:
         raise NotImplementedError("ChipShoverAdapter.get_position")
+
+    def home(self) -> None:
+        raise NotImplementedError("ChipShoverAdapter.home")
+
+    def set_origin(self) -> None:
+        raise NotImplementedError("ChipShoverAdapter.set_origin")

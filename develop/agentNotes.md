@@ -117,10 +117,108 @@ Two complementary log sinks:
 - Session log files are append-only and never deleted by the script — the
   user decides when to clean up
 
-### What's left for build-out
-When the `NotImplementedError` stubs are implemented, the log calls are already
-in place. Future implementors should:
-- Add `log.error(...)` in exception handlers when real error paths exist
-- Add `log.info` for subprocess completion (build success/failure, agent exit code)
-- Consider adding a request-ID header for correlating WS messages with the
-  HTTP request that spawned them
+---
+
+## Session 3: Full Implementation (2026-05-27)
+
+### What was implemented
+
+All `NotImplementedError` stubs replaced with working logic. Every 501 endpoint
+now returns real data or meaningful errors.
+
+#### Backend modules (all under `backend/develop/`)
+
+**`projects.py`** — full CRUD:
+- `list_projects()` scans `~/emfi-projects/`, reads `project.toml` via `tomllib`
+- `create_project()` copies template, renders `project.toml.template`, git init + commit
+- `delete_project()` soft-deletes to `.trash/`
+- `file_tree()` recursive dir walk (skips `.git`, `builds`)
+- `read_file()` / `write_file()` with path-traversal prevention
+- Custom exceptions: `ProjectNotFoundError`, `ProjectExistsError`
+
+**`git_ops.py`** — all via subprocess:
+- `commit()` — `git add -A` then `git commit`, returns SHA
+- Detects "nothing to commit" gracefully
+- `log_entries()` uses null-byte delimited format (safe against quotes in messages)
+- Sets user.email/user.name on `init()` for lab-box repos
+
+**`targets.py`** — JSON file CRUD with auto-commit
+
+**`builds.py`** — async build pipeline:
+- Reads `project.toml` for language, dispatches to `make` or `cargo`
+- `compute_sha()` hashes source tree + toolchain version strings
+- Caches builds: if `builds/<sha>/` exists, returns cached artifact
+- `_collect_artifacts()` copies ELF/BIN/LST into build dir
+- Writes `build_meta.json` for metadata retrieval
+- Graceful `ToolchainNotFoundError` if gcc/cargo not on PATH → 503
+- Streams build output via broadcaster (BUILD_LOG, BUILD_STATUS topics)
+
+**`disassemble.py`** — objdump parser:
+- Regex state machine: function headers, instructions, source annotations
+- `disassemble_cached()` caches parsed result as `disassembly.json`
+
+**`agent.py`** — async subprocess:
+- Spawns `claude --print <prompt>` in project dir
+- Streams output via broadcaster (AGENT_OUTPUT topic)
+- Graceful error if Claude CLI not installed
+
+**`broadcaster.py`** — new module:
+- Module-level singleton `broadcaster`
+- Topic-based pub/sub for WebSocket clients
+- Dead client cleanup on send failure
+
+#### Routers
+
+All wired to real backend modules with proper HTTP error codes:
+- 404 for missing project/build/file
+- 409 for duplicate project/target
+- 503 for missing toolchain
+- `routers/projects.py` — `put_file` changed from query param to `PutFileRequest` body model
+- `routers/templates.py` — scans template dirs, reads language/hal from toml template
+
+#### Frontend (all under `frontend/src/`)
+
+**Infrastructure:**
+- `vite.config.ts` — fixed proxy: `/projects`, `/templates`, `/ws` → backend
+- `types.ts` — added `BuildArtifact`, `GlitchTarget`, `WsEvent`, `FileTreeNode`, `Template`, `GitLogEntry`
+- `api.ts` — complete typed client for all endpoints, including `flashToTarget` (calls Control)
+- `ws.ts` — reconnecting WebSocket class with topic subscription and exponential backoff
+- `stores/index.ts` — Svelte stores for build log, status, agent output, targets
+
+**Components:**
+- `MonacoEditor.svelte` — dynamic import, vs-dark theme, language detection, Ctrl-S save
+- `ProjectTree.svelte` — recursive tree with expand/collapse, file selection events
+- `BuildLog.svelte` — auto-scroll, ANSI strip, 10k line cap
+- `AssemblyView.svelte` — instruction table with target highlighting, click-to-select
+
+**Pages:**
+- `/` — project list as card grid, create form with template dropdown, delete with confirmation
+- `/projects/[id]` — 3-panel editor: file tree | Monaco | console. Git controls (commit/tag),
+  agent prompt, build button, flash button, tabbed console (build log / agent / git log)
+- `/projects/[id]/asm` — build selector, assembly table, target sidebar, add-target dialog
+
+**Layout:** clean nav with breadcrumbs, dark header
+
+### Pre-implementation fixes applied
+1. Vite proxy changed from `/api` to specific route prefixes
+2. Build POST URL fixed from plural to singular in api.ts
+3. `put_file` changed from query param to request body
+
+### Verification
+- `python3 -m py_compile` on all `.py` files: **PASS**
+- `npx svelte-check`: **0 errors, 0 warnings**
+
+### What needs Control for full operation
+The "Flash" button calls `POST http://localhost:8001/target/flash` with:
+```json
+{"elf_url": "http://...:8002/projects/{id}/builds/{sha}/firmware.elf", "build_sha": "..."}
+```
+Control needs this endpoint to download the ELF and flash via XDS110.
+
+### What needs toolchains for full operation
+- `arm-none-eabi-gcc` + `make` for C builds
+- `cargo` + `thumbv8m.main-none-eabi` target for Rust builds
+- `arm-none-eabi-objdump` for disassembly
+- `claude` CLI for agent endpoint
+
+All fail gracefully with 503 + descriptive message if not installed.

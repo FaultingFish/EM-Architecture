@@ -1,6 +1,3 @@
-// Types mirror emfi_protocol/projects.py.
-// TODO: replace this hand-written shadow with output of openapi-typescript.
-
 export interface AssemblyInstruction {
   pc: number;
   bytes_hex: string;
@@ -27,4 +24,53 @@ export interface Project {
   created_at: string;
   description?: string | null;
   versions: string[];
+}
+
+export interface BuildArtifact {
+  project_id: string;
+  version?: string | null;
+  sha: string;
+  built_at: string;
+  elf_path: string;
+  bin_path: string;
+  listing_path: string;
+  symbols_path: string;
+  success: boolean;
+  log_tail?: string | null;
+}
+
+export interface GlitchTarget {
+  pc_address: number;
+  name: string;
+  expected_delay_cycles?: number | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface WsEvent {
+  type: string;
+  topic?: string | null;
+  payload?: Record<string, unknown> | null;
+  id?: string | null;
+  error?: string | null;
+}
+
+export interface FileTreeNode {
+  name: string;
+  type: 'file' | 'dir';
+  path: string;
+  children?: FileTreeNode[];
+}
+
+export interface Template {
+  id: string;
+  language: string;
+  hal: string;
+}
+
+export interface GitLogEntry {
+  sha: string;
+  message: string;
+  date: string;
+  author: string;
 }

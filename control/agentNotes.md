@@ -84,15 +84,66 @@ The scaffold had almost zero logging infrastructure:
 
 ---
 
+## Endpoint Wiring (Session 3)
+
+### Problem
+All router endpoints were 501 stubs. View and Develop apps need real working endpoints — WS streaming, REST for devices/motion/shouter/campaigns/runs/safety, and `POST /target/flash` with scaffold-power-on-before-flash semantics.
+
+### What was added
+
+**`src/control/deps.py`** (NEW) — central application context:
+- `AppContext` dataclass holding all shared singletons: Config, AppState, Broadcaster, ArmGate, StopFlag, RateLimiter, Logbook, WorkerRegistry, all 4 adapters, Orchestrator, in-memory campaigns dict
+- `build_context()` factory — instantiates everything in order, wires `arm_gate.on_change` to update state + broadcast `arm` topic
+- `broadcast(topic, payload)` helper — uses `broadcast_threadsafe` when called from device worker threads
+- `get_ctx(request)` — FastAPI `Depends` helper for all routers
+- `call_adapter(worker, fn, ...)` — runs fn on DeviceWorker, catches `NotImplementedError` → 501
+- `call_subprocess_adapter(fn, ...)` — same for XDS110 (no DeviceWorker, uses `run_in_executor`)
+
+**`main.py`** updated:
+- Lifespan creates `AppContext` via `build_context()`, stores on `app.state.ctx`, captures `asyncio.get_running_loop()` for thread-safe broadcasting
+- Shutdown path: `stop_flag.set()`, disconnect all adapters safely, `workers.shutdown_all()`
+- Global exception handlers: `Disarmed` → 403, `RateLimited` → 429, `NotImplementedError` → 501
+
+**All 8 routers wired** — no more 501 stubs for logic that doesn't need hardware:
+
+| Router | Endpoints | Notes |
+|--------|-----------|-------|
+| `safety.py` | `POST /arm`, `POST /disarm`, `GET /arm_state` | Fully working, returns `ArmState` model |
+| `ws.py` | `WS /ws` | Full broadcaster binding, initial state snapshot, ping/subscribe support |
+| `devices.py` | `GET /devices`, `POST /{name}/connect`, `POST /{name}/disconnect` | Port scan works; connect/disconnect call adapters via workers |
+| `motion.py` | `POST /move_abs`, `/move_rel`, `/home`, `/set_origin`, `/set_top_right` | `set_top_right` is pure state (works now); others hit adapter stubs → 501 |
+| `shouter.py` | `POST /arm`, `/disarm`, `/pulse`, `/config` | Pulse enforces arm gate (403) + rate limiter (429) before adapter call |
+| `target.py` | `POST /flash`, `/reset`, `/debug_attach`, `/debug_detach` | Flash sequence: scaffold `dut_power_cycle()` → XDS110 `flash(elf_path)` |
+| `campaigns.py` | `POST /campaigns`, `GET /campaigns`, `GET /{id}`, `POST /{id}/stop` | In-memory campaign store, background task for orchestrator |
+| `runs.py` | `GET /runs`, `GET /{id}`, `GET /heatmap`, `POST /replay/{run_id}` | Logbook queries work; replay enforces arm gate |
+
+**`adapters/chipshover.py`** — added missing stubs: `home()`, `set_origin()`, `move_relative()`
+
+### What works without hardware
+- ARM/disarm cycle with auto-disarm countdown
+- WS connection with full state snapshot on connect + live broadcasts
+- Device listing with port scan
+- Campaign create/list/get/stop (orchestrator runs as background task, catches NotImplementedError)
+- Logbook queries (runs, heatmap) from SQLite mirror
+- `set_top_right` (pure state operation)
+- Proper error responses: 403 for disarmed, 429 for rate limited, 501 for unimplemented adapters, 404 for not found
+
+### Flash endpoint sequence
+`POST /target/flash { build_sha, elf_url }`:
+1. Scaffold worker: `dut_power_cycle()` — powers on the DUT board
+2. Resolve ELF: supports `file://` (local path) and `http://` (download from Develop)
+3. XDS110: `flash(elf_path)` via `run_in_executor` (subprocess, not DeviceWorker)
+4. Currently returns 501 because `ScaffoldAdapter.dut_power_cycle()` is a NotImplementedError stub
+
+---
+
 ## Architecture Notes
 
 ### What still needs build-out (V1 scope, stubs exist)
 These are all `raise NotImplementedError` stubs that the build-out session should fill in:
 
 1. **Orchestrator** — `perform_attempt()`, `run_campaign()`, `replay()`. Reference: `old-em-setup/glitchweb/backend/app/orchestrator.py` lines 49-222.
-2. **All adapter `.connect()` / `.disconnect()` methods** — each wraps the upstream pip library.
-3. **All router endpoint bodies** — currently return 501. Wire them to adapters + state + logbook.
-4. **WS router** — needs to bind to `Broadcaster`, send initial state snapshot, handle `subscribe`/`ping`.
+2. **All adapter `.connect()` / `.disconnect()` and device-specific methods** — each wraps the upstream pip library (chipshover, chipshouter, donjon-scaffold) or a subprocess (openocd, dslite).
 
 ### What is Phase 2 (deferred, do NOT implement)
 - USB webcam overlay + optical calibration

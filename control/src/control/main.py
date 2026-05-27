@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import logging.handlers
 import os
@@ -11,17 +12,20 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from control.deps import build_context
 from control.routers import (
     campaigns,
     devices,
     motion,
     runs,
-    safety,
+    safety as safety_router,
     shouter,
     target,
     ws,
 )
+from control.safety import Disarmed, RateLimited
 
 LOGGER = logging.getLogger("control")
 
@@ -35,10 +39,7 @@ def _default_log_dir() -> Path:
 
 
 def setup_logging() -> Path:
-    """Configure root logger: console + rotating file.
-
-    Returns the log file path so start.sh can display it.
-    """
+    """Configure root logger: console + rotating file."""
     log_dir = Path(os.environ.get("CONTROL_LOG_DIR", "")) or _default_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "control.log"
@@ -70,11 +71,26 @@ def setup_logging() -> Path:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log_path = setup_logging()
     LOGGER.info("Control starting — log file: %s", log_path)
+
+    ctx = build_context()
+    app.state.ctx = ctx
+    ctx.loop = asyncio.get_running_loop()
+
     LOGGER.info("API docs: http://%s:%s/docs",
                 os.environ.get("CONTROL_HOST", "0.0.0.0"),
                 os.environ.get("CONTROL_PORT", "8001"))
-    yield
-    LOGGER.info("Control shutting down")
+
+    try:
+        yield
+    finally:
+        LOGGER.info("Control shutting down")
+        ctx.stop_flag.set()
+        for adapter in (ctx.shover, ctx.shouter, ctx.scaffold, ctx.xds110):
+            try:
+                adapter.disconnect()
+            except Exception:
+                pass
+        ctx.workers.shutdown_all()
 
 
 def create_app() -> FastAPI:
@@ -85,13 +101,24 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # LAN-only deployment — auth is out of scope. Permit any origin.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(Disarmed)
+    async def _disarmed(request: Request, exc: Disarmed) -> JSONResponse:
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    @app.exception_handler(RateLimited)
+    async def _rate_limited(request: Request, exc: RateLimited) -> JSONResponse:
+        return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+    @app.exception_handler(NotImplementedError)
+    async def _not_impl(request: Request, exc: NotImplementedError) -> JSONResponse:
+        return JSONResponse(status_code=501, content={"detail": f"Not implemented: {exc}"})
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next) -> Response:
@@ -107,7 +134,7 @@ def create_app() -> FastAPI:
     app.include_router(target.router)
     app.include_router(campaigns.router)
     app.include_router(runs.router)
-    app.include_router(safety.router)
+    app.include_router(safety_router.router)
     app.include_router(ws.router)
 
     return app

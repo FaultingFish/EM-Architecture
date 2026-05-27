@@ -5,15 +5,14 @@
 
 <div class="toast-container">
   {#each $toasts as t (t.id)}
-    <div
+    <button
       class="toast {t.level}"
       transition:fly={{ x: 200, duration: 250 }}
       on:click={() => toasts.dismiss(t.id)}
-      role="alert"
     >
       {#if t.where}<span class="where">{t.where}</span>{/if}
       <span class="msg">{t.message}</span>
-    </div>
+    </button>
   {/each}
 </div>
 

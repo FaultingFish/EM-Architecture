@@ -27,5 +27,13 @@ def arm_objdump_bin() -> str:
     return os.environ.get("ARM_OBJDUMP_BIN", "arm-none-eabi-objdump")
 
 
+def arm_objcopy_bin() -> str:
+    return os.environ.get("ARM_OBJCOPY_BIN", "arm-none-eabi-objcopy")
+
+
 def cargo_bin() -> str:
     return os.environ.get("CARGO_BIN", "cargo")
+
+
+def control_url() -> str:
+    return os.environ.get("EMFI_CONTROL_URL", "http://localhost:8001")

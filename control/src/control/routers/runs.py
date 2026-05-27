@@ -2,29 +2,39 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+import logging
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from emfi_protocol.runs import AttemptResult
+from control.deps import AppContext, get_ctx
+
+LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
 
 
-@router.get("/runs", response_model=List[AttemptResult])
+@router.get("/runs")
 async def list_runs(
     campaign: Optional[str] = Query(None),
     since: Optional[str] = Query(None),
     outcome: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=10000),
-) -> List[AttemptResult]:
+    ctx: AppContext = Depends(get_ctx),
+) -> List[Dict[str, Any]]:
     """Query the logbook (backed by SQLite mirror for speed)."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="TODO")
+    entries = ctx.logbook.read(since=since, limit=limit, outcome=outcome)
+    if campaign:
+        entries = [e for e in entries if e.get("campaign_id") == campaign]
+    return entries
 
 
-@router.get("/runs/{run_id}", response_model=AttemptResult)
-async def get_run(run_id: str) -> AttemptResult:
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="TODO")
+@router.get("/runs/{run_id}")
+async def get_run(run_id: str, ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    entry = ctx.logbook.get(run_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return entry
 
 
 @router.get("/heatmap")
@@ -32,12 +42,16 @@ async def heatmap(
     campaign: Optional[str] = Query(None),
     z: Optional[float] = Query(None),
     outcome: str = Query("glitch"),
-) -> List[dict]:
+    ctx: AppContext = Depends(get_ctx),
+) -> List[Dict[str, Any]]:
     """GROUP BY (x, y) on outcome. Returns [{x, y, count}]."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="TODO")
+    return ctx.logbook.heatmap(campaign_id=campaign, z=z, outcome=outcome)
 
 
 @router.post("/replay/{run_id}")
-async def replay(run_id: str) -> dict:
+async def replay(run_id: str, ctx: AppContext = Depends(get_ctx)) -> dict:
     """Re-execute the exact glitch attempt identified by run_id."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="TODO")
+    ctx.arm_gate.require_armed()
+    ctx.rate_limiter.acquire()
+    result = await ctx.orchestrator.replay(run_id)
+    return result
