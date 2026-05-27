@@ -39,13 +39,23 @@ def _broadcast_position(ctx: AppContext) -> None:
     })
 
 
+async def _refresh_position(ctx: AppContext) -> None:
+    """Read actual position from the adapter and update both machine and logical state."""
+    worker = ctx.workers.get("chipshover")
+    machine = await call_adapter(worker, ctx.shover.get_position)
+    ctx.state.position_machine = machine
+    logical = ctx.shover.get_position_logical()
+    ctx.state.position_logical = logical
+
+
 @router.post("/move_abs")
 async def move_abs(req: MoveAbsRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
     worker = ctx.workers.get("chipshover")
     await call_adapter(worker, ctx.shover.move_absolute_logical, req.x, req.y, req.z)
-    ctx.state.position_logical = (req.x, req.y, req.z)
+    await _refresh_position(ctx)
     _broadcast_position(ctx)
-    return {"ok": True, "position": [req.x, req.y, req.z]}
+    lx, ly, lz = ctx.state.position_logical
+    return {"ok": True, "position": [lx, ly, lz]}
 
 
 @router.post("/move_rel")
@@ -54,23 +64,20 @@ async def move_rel(req: MoveRelRequest, ctx: AppContext = Depends(get_ctx)) -> d
         raise HTTPException(status_code=400, detail=f"Invalid axis: {req.axis}")
     worker = ctx.workers.get("chipshover")
     await call_adapter(worker, ctx.shover.move_relative, req.axis.upper(), req.distance)
-    lx, ly, lz = ctx.state.position_logical
-    idx = {"X": 0, "Y": 1, "Z": 2}[req.axis.upper()]
-    pos = list(ctx.state.position_logical)
-    pos[idx] += req.distance
-    ctx.state.position_logical = tuple(pos)  # type: ignore[assignment]
+    await _refresh_position(ctx)
     _broadcast_position(ctx)
-    return {"ok": True, "position": pos}
+    lx, ly, lz = ctx.state.position_logical
+    return {"ok": True, "position": [lx, ly, lz]}
 
 
 @router.post("/home")
 async def home(ctx: AppContext = Depends(get_ctx)) -> dict:
     worker = ctx.workers.get("chipshover")
     await call_adapter(worker, ctx.shover.home)
-    ctx.state.position_logical = (0.0, 0.0, 0.0)
-    ctx.state.position_machine = (0.0, 0.0, 0.0)
+    await _refresh_position(ctx)
     _broadcast_position(ctx)
-    return {"ok": True, "position": [0.0, 0.0, 0.0]}
+    lx, ly, lz = ctx.state.position_logical
+    return {"ok": True, "position": [lx, ly, lz]}
 
 
 @router.post("/set_origin")
@@ -79,7 +86,7 @@ async def set_origin(ctx: AppContext = Depends(get_ctx)) -> dict:
     worker = ctx.workers.get("chipshover")
     await call_adapter(worker, ctx.shover.set_origin)
     ctx.state.origin_set = True
-    ctx.state.position_logical = (0.0, 0.0, 0.0)
+    await _refresh_position(ctx)
     _broadcast_position(ctx)
     ctx.broadcast_state()
     return {"ok": True, "origin_set": True}

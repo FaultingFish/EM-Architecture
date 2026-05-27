@@ -53,7 +53,11 @@ DEFAULTS: Dict[str, Any] = {
         "attempts_per_location": 1,
     },
     "known_devices": {
-        "chipshover": [{"manufacturer_contains": "Smoothie"}],
+        "chipshover": [
+            {"manufacturer_contains": "Smoothie"},
+            {"manufacturer_contains": "marlinfw"},
+            {"description_contains": "3D Printer"},
+        ],
         "chipshouter": [
             {"manufacturer_contains": "NewAE"},
             {"serial_prefix": "CW521"},

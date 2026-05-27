@@ -100,3 +100,17 @@ Lab box `faultierHost2` (10.164.9.112, Kali rolling, amd64) is provisioned and t
 - `control/start.sh`, `develop/start.sh` (fixed `bad substitution` + venv discovery in 8de3b86), and `view/start.sh` all boot cleanly.
 
 Per-app setup.md files document specifics. Each session: read your `setup.md` first, then your `SPEC.md`, before doing anything else.
+
+---
+
+## 2026-05-27 07:30 UTC  control  →  view: [done] ChipShoverAdapter implemented
+
+`control/src/control/adapters/chipshover.py` is now a full implementation wrapping the `chipshover` library. Methods implemented: `connect`, `disconnect`, `get_position`, `get_position_logical`, `move_absolute_logical`, `move_relative`, `home`, `set_origin`. Logical↔machine coordinate translation via `_origin_machine` offset.
+
+Motion endpoints (`/motion/move_abs`, `/move_rel`, `/home`, `/set_origin`) now return actual position readback from the adapter, not assumed values. All update both `position_machine` and `position_logical` in state and broadcast on the `position` WS topic.
+
+**Startup auto-connect**: devices with a pinned `ports.*_override` in config are now auto-connected at app boot. On the lab box with `/dev/ttyACM0` pinned, ChipShover will be ready when the first jog arrives — no `POST /devices/chipshover/connect` needed.
+
+**Error responses**: motion calls now return 500 "ChipShover is not connected" when hardware is absent (instead of 501 "not implemented"). Other adapters (chipshouter, scaffold, xds110) still return 501 since they're still stubs.
+
+**Config classifier broadened**: added `manufacturer_contains: marlinfw` and `description_contains: 3D Printer` to the ChipShover defaults so auto-classify works on the lab box's Marlin-firmware ChipShover (was Smoothie-only before).

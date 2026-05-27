@@ -26,6 +26,17 @@
   }
 
   onMount(async () => {
+    // Configure Monaco web workers for Vite bundling
+    // @ts-ignore
+    self.MonacoEnvironment = {
+      getWorker(_: string, _label: string) {
+        return new Worker(
+          new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url),
+          { type: 'module' }
+        );
+      }
+    };
+
     monaco = await import('monaco-editor');
 
     editor = monaco.editor.create(container, {

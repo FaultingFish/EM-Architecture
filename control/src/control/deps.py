@@ -159,6 +159,8 @@ async def call_adapter(worker: DeviceWorker, fn: Callable, *args: Any, **kwargs:
         return await worker.call(fn, *args, **kwargs)
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=f"Adapter not implemented: {exc}")
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 async def call_subprocess_adapter(fn: Callable, *args: Any, **kwargs: Any) -> Any:
@@ -167,3 +169,5 @@ async def call_subprocess_adapter(fn: Callable, *args: Any, **kwargs: Any) -> An
         return await loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=f"Adapter not implemented: {exc}")
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

@@ -3,6 +3,9 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [sveltekit()],
+  optimizeDeps: {
+    include: ['monaco-editor']
+  },
   server: {
     proxy: {
       '/projects': 'http://localhost:8002',

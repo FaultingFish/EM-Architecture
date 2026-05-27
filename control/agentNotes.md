@@ -152,6 +152,56 @@ These are all `raise NotImplementedError` stubs that the build-out session shoul
 - Cross-rig comparison / cloud archive
 - AWS S3 / Azure Blob nightly logbook backup
 
+---
+
+## ChipShoverAdapter Implementation (Session 4)
+
+### Problem
+`adapters/chipshover.py` was all `NotImplementedError` stubs. Every motion endpoint returned 501. The `agentConversation.md` block entry identified this as a concrete blocker for View's JogPad.
+
+### What was implemented
+
+**`adapters/chipshover.py`** — full implementation wrapping the `chipshover` pip library:
+
+| Method | Implementation |
+|--------|---------------|
+| `connect(port)` | `ChipShover(port)`, reads initial position |
+| `disconnect()` | `self._impl.close()`, clears state |
+| `get_position()` | Returns machine `(x, y, z)` from library |
+| `get_position_logical()` | Machine pos minus origin offset |
+| `move_absolute_logical(x, y, z)` | Translates via `_origin_machine`, calls `self._impl.move(mx, my, mz)` |
+| `move_relative(axis, distance)` | Reads current pos, adds delta, calls `move()` |
+| `home()` | `self._impl.home()`, clears origin |
+| `set_origin()` | Records current machine position as `_origin_machine` |
+
+Logical↔machine coordinate translation ported from `old-em-setup/glitchweb/backend/app/devices/chipshover_dev.py:92-104`.
+
+**Startup auto-connect** (`main.py`):
+- `_auto_connect()` runs in the lifespan after context build
+- Connects any device that has a pinned `ports.*_override` in config
+- Failures are logged but don't block startup
+- On the lab box with pinned `/dev/ttyACM0`, ChipShover auto-connects at boot
+
+**Motion router** (`routers/motion.py`):
+- Updated to read back actual position from adapter after every move (`_refresh_position()`)
+- Updates both `position_machine` and `position_logical` in state
+
+**Error handling** (`deps.py`):
+- `call_adapter()` now catches `RuntimeError` and `ValueError` from adapters → 500 with clear message
+- "ChipShover is not connected" → 500 (hardware absent)
+- "Adapter not implemented" → 501 (stub methods on other adapters)
+
+**Config defaults** (`config.py`):
+- Added Marlin-based classifier patterns (`manufacturer_contains: marlinfw`, `description_contains: 3D Printer`) since the lab box's ChipShover runs Marlin, not Smoothie
+
+### Current error behavior per adapter
+| Adapter | Status | Error on call |
+|---------|--------|--------------|
+| ChipShover | **Implemented** | 500 "not connected" (no hardware) or works (lab box) |
+| ChipSHOUTER | Stub | 501 "not implemented" |
+| Scaffold | Stub | 501 "not implemented" |
+| XDS110 | Stub (except `detach_debugger`) | 501 "not implemented" |
+
 ### Key invariants to preserve
 1. All hardware calls go through `DeviceWorker` (single-thread-per-device executor).
 2. All pulse-emitting paths call `arm_gate.require_armed()` then `rate_limiter.acquire()`.

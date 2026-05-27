@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from control.deps import build_context
+from control.deps import ADAPTER_ATTR, DEVICE_NAMES, build_context
 from control.routers import (
     campaigns,
     devices,
@@ -67,6 +67,30 @@ def setup_logging() -> Path:
     return log_path
 
 
+def _auto_connect(ctx) -> None:
+    """Connect devices that have a pinned port override in config."""
+    from control.deps import AppContext
+    overrides = ctx.config.get("ports", default={})
+    for device_name in DEVICE_NAMES:
+        port = overrides.get(f"{device_name}_override")
+        if not port:
+            continue
+        adapter = ctx.adapter_for(device_name)
+        try:
+            adapter.connect(port)
+            ds = ctx.state.devices.get(device_name)
+            if ds:
+                ds.connected = True
+                ds.port = port
+                ds.last_error = None
+            LOGGER.info("Auto-connected %s on %s", device_name, port)
+        except Exception as exc:
+            LOGGER.warning("Auto-connect %s on %s failed: %s", device_name, port, exc)
+            ds = ctx.state.devices.get(device_name)
+            if ds:
+                ds.last_error = str(exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log_path = setup_logging()
@@ -79,6 +103,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     LOGGER.info("API docs: http://%s:%s/docs",
                 os.environ.get("CONTROL_HOST", "0.0.0.0"),
                 os.environ.get("CONTROL_PORT", "8001"))
+
+    _auto_connect(ctx)
 
     try:
         yield
