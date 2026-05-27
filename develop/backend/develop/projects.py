@@ -61,6 +61,7 @@ def _load_project(project_path: Path) -> Project:
         else datetime.now(timezone.utc),
         description=data.get("description"),
         build_command=data.get("build_command"),
+        artifact_elf=data.get("artifact_elf"),
         versions=versions,
     )
 
@@ -219,6 +220,38 @@ def _unique_slug(base: str) -> str:
     return f"{slug}_{n}"
 
 
+def _detect_ccs_artifact(src: Path) -> str | None:
+    """Detect the .out artifact path for a CCS project.
+
+    Approach: parse .project XML for <name>, fall back to globbing Debug/*.out.
+    """
+    project_xml = src / ".project"
+    if project_xml.exists():
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(project_xml)
+            name_el = tree.find("name")
+            if name_el is not None and name_el.text:
+                candidate = f"Debug/{name_el.text.strip()}.out"
+                log.info("CCS .project name=%s → artifact_elf=%s", name_el.text.strip(), candidate)
+                return candidate
+        except Exception as e:
+            log.warning("Failed to parse .project XML: %s", e)
+
+    debug_dir = src / "Debug"
+    if debug_dir.exists():
+        outs = list(debug_dir.glob("*.out"))
+        if len(outs) == 1:
+            candidate = f"Debug/{outs[0].name}"
+            log.info("CCS Debug/ glob found single .out → artifact_elf=%s", candidate)
+            return candidate
+        if len(outs) > 1:
+            log.warning("Multiple .out files in Debug/: %s — leaving artifact_elf unset", outs)
+
+    log.info("Could not auto-detect CCS artifact; artifact_elf left unset (edit project.toml manually)")
+    return None
+
+
 def import_project(
     name: str,
     source_path: str,
@@ -250,8 +283,10 @@ def import_project(
         log.info("Detected CCS project layout in %s", source_path)
 
     build_command: str | None = None
+    artifact_elf: str | None = None
     if is_ccs:
         build_command = "make -C Debug all"
+        artifact_elf = _detect_ccs_artifact(src)
 
     if not description and is_ccs:
         description = "Imported from Code Composer Studio project; build runs make -C Debug."
@@ -294,6 +329,8 @@ def import_project(
     ]
     if build_command:
         toml_lines.append(f'build_command = "{build_command}"')
+    if artifact_elf:
+        toml_lines.append(f'artifact_elf = "{artifact_elf}"')
     (dest / "project.toml").write_text("\n".join(toml_lines) + "\n")
 
     if not (dest / "targets.json").exists():

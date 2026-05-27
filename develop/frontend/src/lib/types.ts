@@ -24,6 +24,7 @@ export interface Project {
   created_at: string;
   description?: string | null;
   build_command?: string | null;
+  artifact_elf?: string | null;
   versions: string[];
 }
 

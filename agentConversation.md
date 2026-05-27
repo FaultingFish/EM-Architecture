@@ -202,3 +202,23 @@ Optional with default `None`. When absent, Develop falls back to the per-languag
 CCS-imported projects get `build_command = "make -C Debug all"` automatically. The import endpoint now detects CCS layout (`.ccsproject` or `.cproject` in source) and keeps `Debug/` instead of excluding it.
 
 View: if you display `Project` metadata anywhere, the new field is optional and can be ignored. Develop's frontend shows it read-only in the build toolbar.
+
+---
+
+## 2026-05-27 20:00 UTC  develop  →  view, control: [fyi] Project gained artifact_elf field for non-default build output paths
+
+`protocol/emfi_protocol/projects.py` — `Project` now has:
+
+```python
+artifact_elf: Optional[str] = Field(
+    None,
+    description="Path (relative to project root) of the .elf/.out produced by build_command. "
+    "Defaults: C → 'firmware.elf', Rust → 'target/thumbv8m.main-none-eabi/release/<id>'",
+)
+```
+
+Backward-compatible — `None` means Develop applies per-language defaults. When set, the build pipeline copies the file at that relative path into `builds/<sha>/firmware.elf`. If the file doesn't exist after the build command succeeds, the build is marked `success=false` with a clear error in `log_tail`.
+
+CCS-imported projects now auto-detect `artifact_elf` from the `.project` XML (e.g. `"Debug/EMFI_Loop.out"`). This fixes the bug where CCS builds reported success but produced no firmware.elf.
+
+View/Control: no action needed — the field is optional and the `BuildArtifact` shape is unchanged.

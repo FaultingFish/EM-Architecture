@@ -182,7 +182,17 @@ async def build(project_id: str, version: str | None = None, force: bool = False
         await broadcaster.broadcast(WsTopic.BUILD_STATUS, {
             "project_id": project_id, "sha": sha, "phase": "linking",
         })
-        _collect_artifacts(proj_path, build_dir, lang)
+        artifact_elf = toml_data.get("artifact_elf")
+        collected = _collect_artifacts(proj_path, build_dir, lang, project_id, artifact_elf)
+        if not collected:
+            success = False
+            msg = (
+                f"Build command succeeded but expected artifact not found: "
+                f"{artifact_elf or _default_artifact_elf(lang, project_id)}. "
+                f"Check project.toml's artifact_elf or the build_command output paths."
+            )
+            log_lines.append(msg)
+            (build_dir / "build.log").write_text("\n".join(log_lines) + "\n")
 
     phase = "done" if success else "failed"
     await broadcaster.broadcast(WsTopic.BUILD_STATUS, {
@@ -213,38 +223,50 @@ async def build(project_id: str, version: str | None = None, force: bool = False
     return artifact
 
 
-def _collect_artifacts(proj_path: Path, build_dir: Path, lang: str) -> None:
-    """Copy/generate build outputs into builds/<sha>/."""
-    if lang == "c":
-        for name in ["firmware.elf", "firmware.bin", "firmware.lst"]:
-            src = proj_path / name
-            if src.exists():
-                shutil.copy2(src, build_dir / name)
-    elif lang == "rust":
-        release_dir = proj_path / "target" / "thumbv8m.main-none-eabi" / "release"
-        for f in release_dir.glob("*"):
-            if f.suffix == "" and f.is_file() and f.stat().st_size > 0:
-                shutil.copy2(f, build_dir / "firmware.elf")
-                break
+def _default_artifact_elf(lang: str, project_id: str) -> str:
+    if lang == "rust":
+        return f"target/thumbv8m.main-none-eabi/release/{project_id}"
+    return "firmware.elf"
 
-        elf = build_dir / "firmware.elf"
-        if elf.exists():
-            objcopy = arm_objcopy_bin()
-            if shutil.which(objcopy):
-                subprocess.run(
-                    [objcopy, "-O", "binary", str(elf), str(build_dir / "firmware.bin")],
-                    check=False,
-                )
-            objdump = arm_objdump_bin()
-            if shutil.which(objdump):
-                result = subprocess.run(
-                    [objdump, "-d", "-S", str(elf)],
-                    capture_output=True, text=True, check=False,
-                )
-                if result.returncode == 0:
-                    (build_dir / "firmware.lst").write_text(result.stdout)
+
+def _collect_artifacts(
+    proj_path: Path, build_dir: Path, lang: str,
+    project_id: str, artifact_elf: str | None,
+) -> bool:
+    """Copy build outputs into builds/<sha>/. Returns True if the ELF was found."""
+    elf_rel = artifact_elf or _default_artifact_elf(lang, project_id)
+    elf_src = proj_path / elf_rel
+
+    if not elf_src.exists():
+        log.warning("Expected artifact %s not found in %s", elf_rel, proj_path)
+        (build_dir / "symbols.json").write_text("[]")
+        return False
+
+    log.info("Collecting artifact %s -> firmware.elf", elf_rel)
+    shutil.copy2(elf_src, build_dir / "firmware.elf")
+
+    elf_dest = build_dir / "firmware.elf"
+
+    objcopy = arm_objcopy_bin()
+    if shutil.which(objcopy):
+        subprocess.run(
+            [objcopy, "-O", "binary", str(elf_dest), str(build_dir / "firmware.bin")],
+            check=False,
+        )
+
+    objdump = arm_objdump_bin()
+    if shutil.which(objdump):
+        result = subprocess.run(
+            [objdump, "-d", "-S", str(elf_dest)],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode == 0:
+            (build_dir / "firmware.lst").write_text(result.stdout)
 
     (build_dir / "symbols.json").write_text("[]")
+    # TODO: make_clean_first flag — run `make -C Debug clean` before build
+    # for CCS projects that want reproducible from-scratch rebuilds.
+    return True
 
 
 async def stream_build_log(project_id: str, sha: str) -> AsyncIterator[str]:

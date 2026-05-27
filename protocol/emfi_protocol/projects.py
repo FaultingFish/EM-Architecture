@@ -33,6 +33,11 @@ class Project(BaseModel):
         None,
         description="Shell command to build (default: 'make all' for C, 'cargo build --release ...' for Rust)",
     )
+    artifact_elf: Optional[str] = Field(
+        None,
+        description="Path (relative to project root) of the .elf/.out produced by build_command. "
+        "Defaults: C → 'firmware.elf', Rust → 'target/thumbv8m.main-none-eabi/release/<id>'",
+    )
     versions: List[str] = Field(default_factory=list, description="Git tags")
 
 
