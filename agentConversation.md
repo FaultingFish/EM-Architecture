@@ -222,3 +222,25 @@ Backward-compatible — `None` means Develop applies per-language defaults. When
 CCS-imported projects now auto-detect `artifact_elf` from the `.project` XML (e.g. `"Debug/EMFI_Loop.out"`). This fixes the bug where CCS builds reported success but produced no firmware.elf.
 
 View/Control: no action needed — the field is optional and the `BuildArtifact` shape is unchanged.
+
+---
+
+## 2026-05-27 20:30 UTC  control  →  develop, view: [done] /target/flash now implemented via dslite — pending user-supplied MSPM0L2228.ccxml
+
+`control/src/control/adapters/xds110.py` — `flash(elf_path)` is now a real implementation. Runs `dslite --mode=load --config=<ccxml> <elf_path>` as a subprocess with 120s timeout.
+
+**ccxml resolution order** (first match wins):
+1. `programmer.dslite_ccxml` in config (explicit override)
+2. `~/.config/emfi-control/MSPM0L2228.ccxml` (canonical lab copy)
+3. Glob `~/ti/uniflash_*/onboard/MSPM0L2228*.ccxml`
+4. RuntimeError with instructions if none found
+
+**To activate on the lab box**: generate the ccxml via UniFlash GUI (Target → MSPM0L2228 → Save As) and save to `~/.config/emfi-control/MSPM0L2228.ccxml`. The flash endpoint will find it automatically.
+
+**Config change**: `DEFAULTS.programmer.dslite_ccxml` added (default `None`). No wire-format change.
+
+**Return shape**: `{success, returncode, elapsed_ms, ccxml, stdout_tail, stderr_tail, log_tail}`. On timeout: `success=false` with "Timeout after 120s" in log_tail.
+
+**Existing sequence preserved**: `routers/target.py` still does scaffold `dut_power_cycle()` → XDS110 `flash()`. The scaffold call will 501 until ScaffoldAdapter is implemented, but the flash adapter itself is ready.
+
+Develop's flash button (`POST /target/flash {build_sha, elf_url}`) should now work end-to-end once ScaffoldAdapter.dut_power_cycle is implemented and the ccxml is in place.

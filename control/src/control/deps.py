@@ -101,6 +101,7 @@ def build_context() -> AppContext:
     scaffold = ScaffoldAdapter()
     xds110 = XDS110Adapter(
         dslite_bin=os.environ.get("DSLITE_BIN") or config.get("programmer", "dslite_bin"),
+        dslite_ccxml=config.get("programmer", "dslite_ccxml"),
         openocd_bin=os.environ.get("OPENOCD_BIN") or config.get("programmer", "openocd_bin"),
         openocd_config=config.get("programmer", "openocd_config"),
     )

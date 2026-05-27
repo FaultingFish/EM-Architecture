@@ -73,6 +73,7 @@ DEFAULTS: Dict[str, Any] = {
     },
     "programmer": {
         "dslite_bin": None,
+        "dslite_ccxml": None,
         "openocd_bin": None,
         "openocd_config": None,
     },
