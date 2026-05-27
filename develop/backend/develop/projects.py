@@ -207,6 +207,158 @@ def read_file(project_id: str, relative_path: str) -> str:
     return target.read_text(errors="replace")
 
 
+def _unique_slug(base: str) -> str:
+    """Return a slug that doesn't collide with existing projects."""
+    slug = _slugify(base)
+    if not project_dir(slug).exists():
+        return slug
+    n = 2
+    while project_dir(f"{slug}_{n}").exists():
+        n += 1
+    return f"{slug}_{n}"
+
+
+def import_project(
+    name: str,
+    source_path: str,
+    language: str,
+    hal: str,
+    description: str = "",
+    exclude: list[str] | None = None,
+) -> Project:
+    """Import an external source directory into ~/emfi-projects/<id>/."""
+    import fnmatch
+
+    src = Path(source_path)
+    if not src.exists() or not src.is_dir():
+        raise FileNotFoundError(f"Source path does not exist or is not a directory: {source_path}")
+    if src.resolve().is_relative_to(projects_root().resolve()):
+        raise ValueError("Source is already under the projects root")
+
+    slug = _unique_slug(name)
+    dest = project_dir(slug)
+
+    if exclude is None:
+        exclude = ["Debug/**", ".git/**"]
+
+    log.info("Importing project name=%s from %s -> %s (exclude=%s)", name, source_path, dest, exclude)
+
+    projects_root().mkdir(parents=True, exist_ok=True)
+    dest.mkdir()
+
+    def _is_excluded(rel: str) -> bool:
+        for pat in exclude:
+            if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel + "/", pat):
+                return True
+            parts = rel.split("/")
+            for i in range(len(parts)):
+                partial = "/".join(parts[: i + 1])
+                if fnmatch.fnmatch(partial, pat) or fnmatch.fnmatch(partial + "/", pat):
+                    return True
+        return False
+
+    for item in src.rglob("*"):
+        rel = str(item.relative_to(src))
+        if _is_excluded(rel):
+            continue
+        target = dest / rel
+        if item.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        elif item.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+
+    now = datetime.now(timezone.utc).isoformat()
+    (dest / "project.toml").write_text(
+        f'name = "{name}"\n'
+        f'language = "{language}"\n'
+        f'target = "mspm0l2228"\n'
+        f'hal = "{hal}"\n'
+        f'created_at = "{now}"\n'
+        f'description = "{description}"\n'
+    )
+
+    if not (dest / "targets.json").exists():
+        (dest / "targets.json").write_text("[]\n")
+
+    host_dir = dest / "host"
+    if not (host_dir / "run.py").exists():
+        host_dir.mkdir(exist_ok=True)
+        _write_default_host_script(host_dir / "run.py")
+
+    git_ops.init(dest)
+    git_ops.commit(dest, f"Import from {source_path}")
+
+    return _load_project(dest)
+
+
+def _write_default_host_script(path: Path) -> None:
+    """Write the default host/run.py template."""
+    path.write_text(_HOST_SCRIPT_TEMPLATE)
+
+
+_HOST_SCRIPT_TEMPLATE = '''\
+"""Host-side experiment driver for this project.
+
+Imported by Control's orchestrator when a campaign references this
+project. Implements the three lifecycle hooks below. `ctx` exposes:
+  ctx.scaffold   — adapters.scaffold.ScaffoldAdapter
+  ctx.shouter    — adapters.chipshouter.ChipShouterAdapter
+  ctx.params     — current SweepParams snapshot
+  ctx.logbook    — control.logbook.Logbook
+  ctx.state      — control.state.AppState (read-only references)
+"""
+
+
+def setup(ctx) -> None:
+    """Called once before the campaign starts. Configure DUT
+    power, trigger mode, etc."""
+    # Standard Scaffold pin map:
+    #   D0 = USER_TEST (PA21)       — trigger: rising edge = test loop start
+    #   D1 = USER_HEARTBEAT (PB14)  — read: toggled = heartbeat alive
+    #   D2 = USER_LED_2 (PB10)      — read: rising edge = fault detected
+    #   D3 = USER_LED_3 (PB9)       — read: falling edge = campaign end
+    sc = ctx.scaffold
+    sc.set_d0_output()      # D0 drives the trigger
+    sc.set_d1_input()       # D1 reads heartbeat
+    sc.set_d2_input()       # D2 reads fault flag
+    sc.set_d3_input()       # D3 reads campaign-complete flag
+
+
+def attempt(ctx) -> dict:
+    """Called once per glitch attempt. Returns
+        {"fault": bool, "heartbeat_alive": bool,
+         "campaign_complete": bool}
+    Reuses the Verdict shape from emfi_protocol.runs."""
+    sc = ctx.scaffold
+
+    # Pulse D0 high to start the test loop on the target
+    sc.set_d0(1)
+    sc.set_d0(0)
+
+    # Wait for the target to respond
+    import time
+    time.sleep(ctx.params.delay_us / 1_000_000 if ctx.params.delay_us else 0.001)
+
+    fault = bool(sc.read_d2())
+    heartbeat_alive = bool(sc.read_d1())
+    campaign_complete = not bool(sc.read_d3())
+
+    return {
+        "fault": fault,
+        "heartbeat_alive": heartbeat_alive,
+        "campaign_complete": campaign_complete,
+    }
+
+
+def teardown(ctx) -> None:
+    """Called once after the campaign ends. Power-down DUT,
+    restore safe state."""
+    sc = ctx.scaffold
+    sc.set_d0(0)
+'''
+
+
 def write_file(project_id: str, relative_path: str, contents: str) -> None:
     """Write file contents, with path-traversal prevention."""
     root = project_dir(project_id)

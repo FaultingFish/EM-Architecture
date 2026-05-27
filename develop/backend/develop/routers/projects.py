@@ -25,6 +25,15 @@ class CreateProjectRequest(BaseModel):
     description: Optional[str] = None
 
 
+class ImportProjectRequest(BaseModel):
+    name: str
+    source_path: str
+    language: str
+    hal: str
+    description: Optional[str] = None
+    exclude: Optional[List[str]] = None
+
+
 class PutFileRequest(BaseModel):
     contents: str
 
@@ -46,6 +55,22 @@ async def create(req: CreateProjectRequest) -> Project:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     except FileNotFoundError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+
+
+@router.post("/import", response_model=Project, status_code=status.HTTP_201_CREATED)
+async def import_project(req: ImportProjectRequest) -> Project:
+    log.info("POST /projects/import name=%s source=%s", req.name, req.source_path)
+    try:
+        return proj.import_project(
+            req.name, req.source_path, req.language, req.hal,
+            req.description or "", req.exclude,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+    except proj.ProjectExistsError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
 
 
 @router.get("/{project_id}", response_model=Project)

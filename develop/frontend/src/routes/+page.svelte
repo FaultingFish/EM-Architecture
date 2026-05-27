@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listProjects, createProject, deleteProject, listTemplates } from '$lib/api';
+  import { listProjects, createProject, deleteProject, listTemplates, importProject } from '$lib/api';
+  import { goto } from '$app/navigation';
   import type { Project, Template } from '$lib/types';
 
   let projects: Project[] = [];
@@ -11,6 +12,13 @@
   let showForm = false;
   let form = { name: '', template: 'c_ti_hal', language: 'c', hal: 'ti', description: '' };
   let creating = false;
+
+  let showImport = false;
+  let importForm = {
+    name: '', source_path: '', language: 'c', hal: 'ti', description: '',
+    exclude: 'Debug/**\n.git/**',
+  };
+  let importing = false;
 
   onMount(async () => {
     try {
@@ -43,6 +51,27 @@
     creating = false;
   }
 
+  async function handleImport() {
+    importing = true;
+    error = '';
+    try {
+      const excludeList = importForm.exclude.split('\n').map(s => s.trim()).filter(Boolean);
+      const p = await importProject({
+        name: importForm.name,
+        source_path: importForm.source_path,
+        language: importForm.language,
+        hal: importForm.hal,
+        description: importForm.description || undefined,
+        exclude: excludeList.length > 0 ? excludeList : undefined,
+      });
+      showImport = false;
+      goto(`/projects/${p.id}`);
+    } catch (e: any) {
+      error = e.message;
+    }
+    importing = false;
+  }
+
   async function handleDelete(id: string) {
     if (!confirm(`Delete project "${id}"? It will be moved to .trash.`)) return;
     try {
@@ -57,9 +86,14 @@
 <div class="page">
   <div class="top-bar">
     <h2>Projects</h2>
-    <button class="btn primary" on:click={() => showForm = !showForm}>
-      {showForm ? 'Cancel' : '+ New Project'}
-    </button>
+    <div style="display:flex;gap:0.5rem">
+      <button class="btn primary" on:click={() => showForm = !showForm}>
+        {showForm ? 'Cancel' : '+ New Project'}
+      </button>
+      <button class="btn" on:click={() => showImport = !showImport}>
+        {showImport ? 'Cancel' : 'Import'}
+      </button>
+    </div>
   </div>
 
   {#if error}
@@ -86,6 +120,45 @@
       </label>
       <button class="btn primary" type="submit" disabled={creating || !form.name}>
         {creating ? 'Creating…' : 'Create'}
+      </button>
+    </form>
+  {/if}
+
+  {#if showImport}
+    <form class="create-form" on:submit|preventDefault={handleImport}>
+      <label>
+        Name
+        <input type="text" bind:value={importForm.name} required placeholder="EMFI Loop" />
+      </label>
+      <label>
+        Source path
+        <input type="text" bind:value={importForm.source_path} required
+               placeholder="/home/stephen/workspace_ccstheia/EMFI_Loop" style="min-width:320px" />
+      </label>
+      <label>
+        Language
+        <select bind:value={importForm.language}>
+          <option value="c">C</option>
+          <option value="rust">Rust</option>
+        </select>
+      </label>
+      <label>
+        HAL
+        <select bind:value={importForm.hal}>
+          <option value="ti">TI</option>
+          <option value="b01lers">b01lers</option>
+        </select>
+      </label>
+      <label>
+        Description
+        <input type="text" bind:value={importForm.description} placeholder="Optional" />
+      </label>
+      <label>
+        Exclude (one glob/line)
+        <textarea bind:value={importForm.exclude} rows={3} style="font-family:monospace;font-size:0.8rem"></textarea>
+      </label>
+      <button class="btn primary" type="submit" disabled={importing || !importForm.name || !importForm.source_path}>
+        {importing ? 'Importing…' : 'Import'}
       </button>
     </form>
   {/if}
