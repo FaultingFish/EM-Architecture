@@ -172,6 +172,11 @@ async def build(project_id: str, version: str | None = None) -> BuildArtifact:
         "project_id": project_id, "sha": sha, "phase": phase,
     })
 
+    host_src = proj_path / "host" / "run.py"
+    host_dest = build_dir / "host_script.py"
+    if host_src.exists():
+        shutil.copy2(host_src, host_dest)
+
     artifact = BuildArtifact(
         project_id=project_id,
         version=version,
@@ -183,6 +188,7 @@ async def build(project_id: str, version: str | None = None) -> BuildArtifact:
         symbols_path=str(build_dir / "symbols.json"),
         success=success,
         log_tail="\n".join(log_lines[-20:]) if log_lines else None,
+        host_script_path=str(host_dest) if host_dest.exists() else None,
     )
     meta_path.write_text(artifact.model_dump_json(indent=2))
 

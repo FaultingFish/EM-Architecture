@@ -37,6 +37,7 @@ export interface BuildArtifact {
   symbols_path: string;
   success: boolean;
   log_tail?: string | null;
+  host_script_path?: string | null;
 }
 
 export interface GlitchTarget {

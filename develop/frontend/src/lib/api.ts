@@ -33,6 +33,17 @@ export async function createProject(data: {
   }));
 }
 
+export async function importProject(data: {
+  name: string; source_path: string; language: string; hal: string;
+  description?: string; exclude?: string[];
+}): Promise<Project> {
+  return json_or_throw(await fetch(`${API}/projects/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }));
+}
+
 export async function deleteProject(id: string): Promise<void> {
   const r = await fetch(`${API}/projects/${id}`, { method: 'DELETE' });
   if (!r.ok) throw new Error(`deleteProject: ${r.status}`);
@@ -132,6 +143,25 @@ export async function runAgent(id: string, prompt: string): Promise<{ job_id: st
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt }),
   }));
+}
+
+// ── Host script ────────────────────────────────────────────
+export async function getHostScript(id: string): Promise<{ path: string; contents: string }> {
+  return json_or_throw(await fetch(`${API}/projects/${id}/host_script`));
+}
+
+export async function putHostScript(id: string, contents: string): Promise<void> {
+  const r = await fetch(`${API}/projects/${id}/host_script`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents }),
+  });
+  if (!r.ok) throw new Error(`putHostScript: ${r.status}`);
+}
+
+// ── Prompt ─────────────────────────────────────────────────
+export async function getPrompt(id: string): Promise<{ prompt: string }> {
+  return json_or_throw(await fetch(`${API}/projects/${id}/prompt`));
 }
 
 // ── Flash (calls Control service) ──────────────────────────

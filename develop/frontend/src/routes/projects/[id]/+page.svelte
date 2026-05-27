@@ -6,7 +6,8 @@
   import BuildLog from '$lib/components/BuildLog.svelte';
   import {
     getProject, getFileTree, getFile, putFile,
-    triggerBuild, gitCommit, gitTag, gitLog, runAgent, flashToTarget, listBuilds
+    triggerBuild, gitCommit, gitTag, gitLog, runAgent, flashToTarget, listBuilds,
+    getPrompt, getHostScript, putHostScript
   } from '$lib/api';
   import { ws } from '$lib/ws';
   import { buildLog, buildStatus, agentOutput } from '$lib/stores';
@@ -26,12 +27,19 @@
   let saving = false;
   let building = false;
   let error = '';
-  let tab: 'build' | 'agent' | 'git' = 'build';
+  let tab: 'build' | 'agent' | 'git' | 'prompt' | 'host' = 'build';
 
   let commitMsg = '';
   let tagName = '';
   let agentPrompt = '';
   let gitEntries: GitLogEntry[] = [];
+  let promptText = '';
+  let promptLoading = false;
+  let copied = false;
+  let hostContent = '';
+  let hostDirty = false;
+  let hostSaving = false;
+  let hostLoaded = false;
 
   function handleBuildLog(ev: WsEvent) {
     if (ev.payload?.project_id === id) {
@@ -154,9 +162,44 @@
     try { builds = await listBuilds(id); } catch {}
   }
 
+  async function loadPrompt() {
+    promptLoading = true;
+    try {
+      const res = await getPrompt(id);
+      promptText = res.prompt;
+    } catch (e: any) { error = e.message; }
+    promptLoading = false;
+  }
+
+  async function copyPrompt() {
+    await navigator.clipboard.writeText(promptText);
+    copied = true;
+    setTimeout(() => { copied = false; }, 2000);
+  }
+
+  async function loadHostScript() {
+    try {
+      const res = await getHostScript(id);
+      hostContent = res.contents;
+      hostDirty = false;
+      hostLoaded = true;
+    } catch (e: any) { error = e.message; }
+  }
+
+  async function saveHostScript(ev: CustomEvent<string>) {
+    hostSaving = true;
+    try {
+      await putHostScript(id, ev.detail);
+      hostDirty = false;
+    } catch (e: any) { error = e.message; }
+    hostSaving = false;
+  }
+
   function switchTab(t: typeof tab) {
     tab = t;
     if (t === 'git' && gitEntries.length === 0) refreshGitLog();
+    if (t === 'prompt' && !promptText) loadPrompt();
+    if (t === 'host' && !hostLoaded) loadHostScript();
   }
 </script>
 
@@ -230,6 +273,8 @@
       <button class:active={tab === 'build'} on:click={() => switchTab('build')}>Build</button>
       <button class:active={tab === 'agent'} on:click={() => switchTab('agent')}>Agent</button>
       <button class:active={tab === 'git'} on:click={() => switchTab('git')}>Git Log</button>
+      <button class:active={tab === 'host'} on:click={() => switchTab('host')}>Host</button>
+      <button class:active={tab === 'prompt'} on:click={() => switchTab('prompt')}>Prompt</button>
     </div>
 
     <div class="console-body">
@@ -237,7 +282,23 @@
         <BuildLog lines={$buildLog} />
       {:else if tab === 'agent'}
         <BuildLog lines={$agentOutput} />
-      {:else}
+      {:else if tab === 'host'}
+        <div class="host-panel">
+          <div class="prompt-toolbar">
+            <span class="muted" style="font-size:0.75rem">host/run.py</span>
+            {#if hostDirty}<span class="dot">●</span>{/if}
+            {#if hostSaving}<span class="muted" style="font-size:0.75rem">Saving…</span>{/if}
+          </div>
+          <div class="host-editor">
+            <MonacoEditor
+              value={hostContent}
+              language="python"
+              on:save={saveHostScript}
+              on:change={() => { hostDirty = true; }}
+            />
+          </div>
+        </div>
+      {:else if tab === 'git'}
         <div class="git-log">
           {#each gitEntries as entry}
             <div class="log-entry">
@@ -248,6 +309,20 @@
           {/each}
           {#if gitEntries.length === 0}
             <p class="muted">No commits yet.</p>
+          {/if}
+        </div>
+      {:else if tab === 'prompt'}
+        <div class="prompt-panel">
+          <div class="prompt-toolbar">
+            <button class="btn small" on:click={copyPrompt} disabled={!promptText}>
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+            <button class="btn small" on:click={loadPrompt} disabled={promptLoading}>Refresh</button>
+          </div>
+          {#if promptLoading}
+            <p class="muted" style="padding:8px">Loading prompt…</p>
+          {:else}
+            <pre class="prompt-text">{promptText}</pre>
           {/if}
         </div>
       {/if}
@@ -323,6 +398,17 @@
   .btn.small { padding: 3px 8px; font-size: 0.78rem; }
   .btn.link { text-decoration: none; display: inline-flex; align-items: center; }
   .btn-icon { all: unset; cursor: pointer; padding: 0 4px; }
+
+  .host-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+  .host-editor { flex: 1; overflow: hidden; }
+
+  .prompt-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+  .prompt-toolbar { display: flex; gap: 4px; padding: 4px 8px; border-bottom: 1px solid #eee; }
+  .prompt-text {
+    flex: 1; margin: 0; padding: 8px; overflow: auto;
+    font-size: 0.78rem; line-height: 1.5; white-space: pre-wrap;
+    background: #1e1e2e; color: #cdd6f4; font-family: monospace;
+  }
 
   .git-log { padding: 8px; overflow-y: auto; font-size: 0.8rem; }
   .log-entry { display: flex; gap: 0.75rem; padding: 3px 0; border-bottom: 1px solid #eee; }

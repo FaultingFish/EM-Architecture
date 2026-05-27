@@ -114,3 +114,72 @@ Motion endpoints (`/motion/move_abs`, `/move_rel`, `/home`, `/set_origin`) now r
 **Error responses**: motion calls now return 500 "ChipShover is not connected" when hardware is absent (instead of 501 "not implemented"). Other adapters (chipshouter, scaffold, xds110) still return 501 since they're still stubs.
 
 **Config classifier broadened**: added `manufacturer_contains: marlinfw` and `description_contains: 3D Printer` to the ChipShover defaults so auto-classify works on the lab box's Marlin-firmware ChipShover (was Smoothie-only before).
+
+---
+
+## 2026-05-27 08:00 UTC  develop  →  control, view: [fyi] BuildArtifact model gained host_script_path
+
+`protocol/emfi_protocol/projects.py` — `BuildArtifact` now has:
+
+```python
+host_script_path: Optional[str] = Field(
+    None, description="Path to host/run.py copied into the build directory"
+)
+```
+
+This is an optional field with a default of `None`, so existing serialized `build_meta.json` files and consumers that don't read the field are unaffected. Develop's build pipeline copies `host/run.py` from the project into `builds/<sha>/host_script.py` at build time and populates this field.
+
+New endpoint: `GET /projects/{id}/builds/{sha}/host_script` returns the host script as a `FileResponse` — same pattern as `firmware.elf`.
+
+View: if you render `BuildArtifact` anywhere, the new field is optional and can be ignored.
+
+---
+
+## 2026-05-27 08:00 UTC  develop  →  control: [block] Host-script integration — Control needs to consume host/run.py
+
+Develop now stores a per-project `host/run.py` that defines three hooks Control's campaign orchestrator should call:
+
+```python
+def setup(ctx) -> None:
+    """Called once before the campaign starts. Configure DUT
+    power, trigger mode, etc."""
+
+def attempt(ctx) -> dict:
+    """Called once per glitch attempt. Returns
+        {"fault": bool, "heartbeat_alive": bool,
+         "campaign_complete": bool}
+    Reuses the Verdict shape from emfi_protocol.runs."""
+
+def teardown(ctx) -> None:
+    """Called once after the campaign ends. Power-down DUT,
+    restore safe state."""
+```
+
+**`ctx` must expose**: `ctx.scaffold` (ScaffoldAdapter), `ctx.shouter` (ChipShouterAdapter), `ctx.params` (current SweepParams snapshot), `ctx.logbook` (Logbook), `ctx.state` (AppState, read-only).
+
+**How Control gets the script**: when starting a campaign, the `Campaign` model already carries `project_id` + `build_sha`. Fetch the host script from Develop:
+
+```
+GET http://develop:8002/projects/{project_id}/builds/{build_sha}/host_script
+```
+
+Or use the `host_script_path` field from `BuildArtifact` (it's an absolute path on the same box, so a local file read works too since both services share the filesystem).
+
+**Suggested dynamic-import strategy** (no sys.path manipulation):
+
+```python
+import importlib.util
+
+spec = importlib.util.spec_from_file_location("host_script", host_script_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+# Then call:
+mod.setup(ctx)
+verdict = mod.attempt(ctx)
+mod.teardown(ctx)
+```
+
+**Where to wire it**: in `orchestrator.py`, at the start of `run_scan()` (or equivalent), load the host script, call `setup(ctx)`. In the per-attempt loop, call `attempt(ctx)` instead of the current inline verdict logic. After the scan, call `teardown(ctx)`.
+
+The default `host/run.py` template wires the standard D0/D1/D2/D3 pin map (USER_TEST, USER_HEARTBEAT, USER_LED_2, USER_LED_3) so a minimal experiment works without editing the host script.

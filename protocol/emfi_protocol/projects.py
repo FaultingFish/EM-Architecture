@@ -45,6 +45,9 @@ class BuildArtifact(BaseModel):
     symbols_path: str
     success: bool
     log_tail: Optional[str] = None
+    host_script_path: Optional[str] = Field(
+        None, description="Path to host/run.py copied into the build directory"
+    )
 
 
 class AssemblyInstruction(BaseModel):
