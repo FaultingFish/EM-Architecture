@@ -90,8 +90,9 @@ export async function gitLog(id: string, limit = 20): Promise<GitLogEntry[]> {
 }
 
 // ── Builds ─────────────────────────────────────────────────
-export async function triggerBuild(id: string, version?: string): Promise<BuildArtifact> {
-  return json_or_throw(await fetch(`${API}/projects/${id}/build`, {
+export async function triggerBuild(id: string, version?: string, force = false): Promise<BuildArtifact> {
+  const qs = force ? '?force=true' : '';
+  return json_or_throw(await fetch(`${API}/projects/${id}/build${qs}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ version }),

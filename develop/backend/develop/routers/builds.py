@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from emfi_protocol.projects import BuildArtifact
@@ -23,11 +23,15 @@ class BuildRequest(BaseModel):
 
 
 @router.post("/projects/{project_id}/build", response_model=BuildArtifact)
-async def trigger(project_id: str, req: BuildRequest = BuildRequest()) -> BuildArtifact:
+async def trigger(
+    project_id: str,
+    req: BuildRequest = BuildRequest(),
+    force: bool = Query(False, description="Skip cache and rebuild"),
+) -> BuildArtifact:
     """Kick a build. Streams logs via WS topic `build_log`."""
-    log.info("POST /projects/%s/build version=%s", project_id, req.version)
+    log.info("POST /projects/%s/build version=%s force=%s", project_id, req.version, force)
     try:
-        return await bld.build(project_id, req.version)
+        return await bld.build(project_id, req.version, force=force)
     except FileNotFoundError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
     except bld.ToolchainNotFoundError as e:
