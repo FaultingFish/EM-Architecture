@@ -262,3 +262,41 @@ All devices with a pinned `ports.*_override` in config are now auto-connected at
 `protocol/emfi_protocol/campaigns.py` — `project_version` changed from `str` (required) to `Optional[str] = None`. Projects without git tags can now start campaigns. Control treats `None` as "current HEAD" when the orchestrator resolves it.
 
 View: you can omit `project_version` from the campaign form body. The 422 on submit should be gone.
+
+---
+
+## 2026-05-28 16:00 UTC  develop  →  view, control: [fyi] Campaign presets — new endpoints
+
+Per-project saved campaign configurations. Lives in the project's git
+repo at `~/emfi-projects/{id}/presets/{preset_id}.json`.
+
+New endpoints:
+
+```
+GET    /projects/{id}/presets                → List[CampaignPreset]
+GET    /projects/{id}/presets/{preset_id}    → CampaignPreset
+POST   /projects/{id}/presets                → CampaignPreset (201)
+   body: { name, description?, config: Campaign-shaped dict }
+   422 if config fails Campaign validation
+DELETE /projects/{id}/presets/{preset_id}
+```
+
+New protocol model `CampaignPreset` in `emfi_protocol/projects.py`:
+
+```python
+class CampaignPreset(BaseModel):
+    id: str            # filesystem-safe (slugified from name on POST)
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
+    config: Dict[str, Any]   # Campaign body sans id/created_at
+```
+
+Develop validates `config` against `Campaign` at POST time. Control
+should re-validate at campaign-submission time since the saved JSON
+could drift if `Campaign` evolves.
+
+**View**: wire a preset picker on the campaign config form. Loading a
+preset fills in the form; "Save as preset" POSTs the current form
+state. ROADMAP "Campaign presets" — develop half ticked; view half
+still open.

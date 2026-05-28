@@ -24,6 +24,7 @@ from develop.routers import (
     disassembly,
     git,
     host_script,
+    presets,
     projects,
     prompt,
     targets,
@@ -88,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(disassembly.router)
     app.include_router(git.router)
     app.include_router(host_script.router)
+    app.include_router(presets.router)
     app.include_router(prompt.router)
     app.include_router(targets.router)
     app.include_router(templates.router)

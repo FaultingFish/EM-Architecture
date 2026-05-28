@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -91,3 +91,20 @@ class GlitchTarget(BaseModel):
     )
     notes: Optional[str] = None
     created_at: datetime
+
+
+class CampaignPreset(BaseModel):
+    """A saved campaign configuration template, stored per-project.
+
+    On disk at `~/emfi-projects/{id}/presets/{preset_id}.json`. `config` is
+    a Campaign-shaped dict, kept opaque at the protocol level — Control
+    re-validates it against `Campaign` when a user submits the preset.
+    """
+
+    id: str = Field(..., description="Filesystem-safe preset ID")
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
+    config: Dict[str, Any] = Field(
+        ..., description="Campaign body (sans id/created_at) as a dict"
+    )
