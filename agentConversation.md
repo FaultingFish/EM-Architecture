@@ -463,3 +463,41 @@ Three consecutive campaign attempts on the lab box failed with `AttributeError: 
 **Tests**: added `control/tests/test_scaffold.py` with 7 unit tests (including a regression test that uses a read-only-`value` pin to assert the new write path doesn't try to assign `.value`), plus 1 `@pytest.mark.hw` round-trip test for the lab box. `FakeScaffold` in `test_orchestrator.py` gained no-op `set_d_output / set_d_input / write_d / read_d` stubs so host-script paths exercised by the campaign tests don't blow up.
 
 Suite: 41 passed, 1 deselected (the hw round-trip). On the lab box: restore `~/emfi-projects/testv4/host/run.py` from the `.bak` and POST a tiny campaign; expect `Loaded host script from ...` in the log and zero `AttributeError` lines. No ROADMAP boxes ticked — this is a hot-fix.
+
+---
+
+## 2026-05-28 06:50 UTC  control  →  develop, view: [done] ChipSHOUTER Reset_Exception retry + ctx.params attr+dict access
+
+Two bugs fixed together — auto-arm should now work without manual intervention; host scripts using either `ctx.params.attr` or `ctx.params["key"]` or `ctx.params.get("key")` all supported.
+
+### Bug 1 — ChipSHOUTER Reset_Exception during auto-arm
+`control/src/control/adapters/chipshouter.py`:
+- Imported `chipshouter.com_tools.Reset_Exception` at module level (with a fallback stub for environments where the lib isn't installed, e.g. CI).
+- Added `_with_reset_retry(label, fn)` helper: runs `fn` once; on `Reset_Exception`, logs a WARN, sleeps 5s (per the lib's documented recovery time), retries once. If the retry also raises, escalates to `RuntimeError` with a hint that the user may need to disconnect/reconnect the chipshouter Python instance.
+- Wrapped both `configure()` and `arm()` bodies in the retry helper. The polling loop inside `arm()` (the state-readback after we send `armed = True`) also handles `Reset_Exception` mid-wait — sleeps 5s and continues polling instead of bombing out.
+- Verified the simple retry pattern with mocked `Reset_Exception` injection. If the lab box shows the lib instance can't recover from a sleep alone, the next iteration should add disconnect/reconnect between retries (the `RuntimeError` message hints at this path).
+
+### Bug 2 — ctx.params attribute vs dict access
+`control/src/control/orchestrator.py`:
+- New `ParamsView` class (dict + namespace hybrid). Supports `view.attr`, `view["key"]`, `view.get("key", default)`, `**view` unpacking, `dict(view)`, `to_dict()`. Missing keys return `None` in all three forgiving forms (host scripts written for one sweep dimension don't crash when run on a campaign that doesn't use that dim).
+- `HostScriptContext.__init__` wraps incoming dict params in a `ParamsView` (and is a no-op when given a ParamsView already, so callers can pass either shape).
+- Per-attempt params merge in `perform_attempt` rebuilds a ParamsView from `host_ctx.params.to_dict()` + the new pulse_params.
+- Verified Develop's templates at `develop/backend/develop/templates/{c_ti_hal,rust_b01lers}/host/run.py` use an `isinstance(ctx.params, dict)` check with `.get()` and `getattr` fallback — they Just Work against the new ParamsView (falls through to the `getattr` branch which now returns the value cleanly via `__getattr__`).
+
+### Defensive — don't lie about completion
+`run_campaign` now tracks `host_script_errors` separately from real shouter faults. After the sweep loop:
+- If `stop_flag.is_set()` → `phase: "stopped"` (unchanged).
+- If `host_script_errors == completed > 0` → `phase: "failed"` with a `reason` field on the `campaign_progress` event (e.g. `"every host_script.attempt() raised (6/6) — check host/run.py"`).
+- Otherwise → `phase: "completed"` (unchanged).
+
+View: a `campaign_progress` event with `phase=failed` now carries an optional `reason` string; surface it as a toast so the user knows why a 100%-error campaign didn't actually fire any pulses.
+
+### Tests
+- New `control/tests/test_chipshouter.py` (5 tests) — verifies the retry triggers on `Reset_Exception`, gives up after the retry limit, and clean-path configure / idempotent arm still work.
+- `control/tests/test_orchestrator.py` extended:
+  - `test_params_view_supports_all_three_access_styles` — attr / dict-key / `.get`, plus `**` unpacking and missing-key behavior.
+  - `test_host_script_context_wraps_dict_params` — HostScriptContext wraps a dict cleanly.
+  - `test_perform_attempt_host_script_can_access_params_three_ways` — end-to-end through `perform_attempt` with a host script using all three access styles.
+  - `test_run_campaign_marks_phase_failed_when_all_attempts_error` — 100%-error campaigns broadcast `phase=failed` with a reason, not `phase=completed`.
+
+Suite: **50 passed, 1 deselected** (the hw round-trip). No ROADMAP boxes ticked — these are hot-fixes.

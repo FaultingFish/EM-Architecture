@@ -31,11 +31,23 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from control.adapters.base import BaseAdapter
 
+try:
+    from chipshouter.com_tools import Reset_Exception  # type: ignore[import-not-found]
+except ImportError:  # library not installed in this env
+    class Reset_Exception(Exception):  # type: ignore[no-redef]
+        """Stand-in for chipshouter.com_tools.Reset_Exception when the lib
+        is not installed (e.g. in test environments)."""
+
 LOGGER = logging.getLogger(__name__)
+
+# Time to wait after a Reset_Exception before retrying. Per the lib's own
+# documented behavior: "wait 5 seconds then reinitialize."
+_RESET_RECOVERY_SLEEP = 5.0
+_RESET_RETRY_LIMIT = 2  # one initial try + one retry
 
 
 class ChipShouterAdapter(BaseAdapter):
@@ -81,6 +93,30 @@ class ChipShouterAdapter(BaseAdapter):
         if self._impl is None:
             raise RuntimeError("ChipSHOUTER is not connected")
 
+    def _with_reset_retry(self, label: str, fn: Callable[[], Any]) -> Any:
+        """Run ``fn`` with one retry on ``Reset_Exception``.
+
+        The ChipSHOUTER occasionally resets during property writes and
+        verification reads (well-known recurring condition; the lib's own
+        docstring recommends sleeping 5s then retrying). If a Reset_Exception
+        still fires on the retry, raise RuntimeError with the recovery
+        steps the user should take.
+        """
+        for attempt in range(_RESET_RETRY_LIMIT):
+            try:
+                return fn()
+            except Reset_Exception:
+                LOGGER.warning(
+                    "ChipSHOUTER reset during %s (attempt %d); waiting %.0fs for reinit",
+                    label, attempt + 1, _RESET_RECOVERY_SLEEP,
+                )
+                time.sleep(_RESET_RECOVERY_SLEEP)
+        raise RuntimeError(
+            f"ChipSHOUTER reset {_RESET_RETRY_LIMIT} times during {label}; "
+            "check HV/USB and retry. If this persists, the chipshouter "
+            "Python instance may need to be re-created (disconnect/reconnect)."
+        )
+
     def configure(
         self,
         voltage: int,
@@ -91,36 +127,57 @@ class ChipShouterAdapter(BaseAdapter):
         mute: bool = True,
     ) -> None:
         self._require_connected()
-        self._impl.voltage = voltage
-        self._impl.pulse.repeat = pulse_repeat
-        self._impl.pulse.width = pulse_width_ns
-        self._impl.pulse.deadtime = pulse_deadtime_ms * 1000
-        self._impl.arm_timeout = arm_timeout_min
-        self._impl.mute = mute
+
+        def _do_configure() -> None:
+            self._impl.voltage = voltage
+            self._impl.pulse.repeat = pulse_repeat
+            self._impl.pulse.width = pulse_width_ns
+            self._impl.pulse.deadtime = pulse_deadtime_ms * 1000
+            self._impl.arm_timeout = arm_timeout_min
+            self._impl.mute = mute
+
+        self._with_reset_retry("configure", _do_configure)
         LOGGER.info("ChipSHOUTER configured: V=%d width=%dns repeat=%d mute=%s",
                      voltage, pulse_width_ns, pulse_repeat, mute)
 
     def arm(self, clear_faults: bool = False, timeout_s: float = 5.0) -> None:
-        """Idempotent arm with timeout. No-op if already armed."""
+        """Idempotent arm with timeout. No-op if already armed.
+
+        Reset_Exception can surface in the lib at any of the property reads
+        and writes below; wrap the whole body in the retry helper.
+        """
         self._require_connected()
-        state = str(self._impl.state).lower()
 
-        if "fault" in state:
-            LOGGER.warning("ChipSHOUTER in fault state (%s), clearing", state)
-            self._impl.faults_current = 0
-            time.sleep(0.1)
+        def _do_arm() -> bool:
+            """Return True if armed (either already or after our request)."""
             state = str(self._impl.state).lower()
+            if "fault" in state:
+                LOGGER.warning("ChipSHOUTER in fault state (%s), clearing", state)
+                self._impl.faults_current = 0
+                time.sleep(0.1)
+                state = str(self._impl.state).lower()
+            if "armed" in state:
+                LOGGER.debug("ChipSHOUTER already armed, skipping")
+                return True
+            LOGGER.info("ChipSHOUTER arming (timeout=%.1fs)", timeout_s)
+            self._impl.armed = True
+            return False
 
-        if "armed" in state:
-            LOGGER.debug("ChipSHOUTER already armed, skipping")
+        already_armed = self._with_reset_retry("arm", _do_arm)
+        if already_armed:
             return
-
-        LOGGER.info("ChipSHOUTER arming (timeout=%.1fs)", timeout_s)
-        self._impl.armed = True
 
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            s = str(self._impl.state).lower()
+            try:
+                s = str(self._impl.state).lower()
+            except Reset_Exception:
+                LOGGER.warning(
+                    "ChipSHOUTER reset during arm wait; waiting %.0fs for reinit",
+                    _RESET_RECOVERY_SLEEP,
+                )
+                time.sleep(_RESET_RECOVERY_SLEEP)
+                continue
             if "armed" in s:
                 LOGGER.info("ChipSHOUTER armed")
                 return

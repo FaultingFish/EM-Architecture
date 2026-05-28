@@ -12,6 +12,7 @@ from control.logbook import Logbook
 from control.orchestrator import (
     HostScriptContext,
     Orchestrator,
+    ParamsView,
     _default_host_script,
     _grid_points,
     _sweep_range_values,
@@ -175,6 +176,41 @@ def test_grid_points_serpentine_y():
     assert [(p[0], p[1]) for p in pts[3:]] == [(2, 1), (1, 1), (0, 1)]
 
 
+def test_params_view_supports_all_three_access_styles():
+    """Host scripts may use any of attr, dict-key, or .get access."""
+    pv = ParamsView({"delay_us": 1.5, "pulse_width_ns": 80})
+    # attribute access
+    assert pv.delay_us == 1.5
+    # dict access
+    assert pv["delay_us"] == 1.5
+    # .get
+    assert pv.get("delay_us") == 1.5
+    # missing keys → None for forgiving forms
+    assert pv.missing is None
+    assert pv["missing"] is None
+    assert pv.get("missing") is None
+    # .get with default
+    assert pv.get("missing", "fallback") == "fallback"
+    # ** unpacking
+    merged = {"x": 0, **pv}
+    assert merged == {"x": 0, "delay_us": 1.5, "pulse_width_ns": 80}
+    # to_dict roundtrip
+    assert pv.to_dict() == {"delay_us": 1.5, "pulse_width_ns": 80}
+
+
+def test_host_script_context_wraps_dict_params():
+    """HostScriptContext wraps a raw dict so host scripts get attribute access."""
+    ctx = HostScriptContext(
+        scaffold=None, shouter=None,
+        params={"delay_us": 2.0},
+        logbook=None, state=None,
+    )
+    assert isinstance(ctx.params, ParamsView)
+    assert ctx.params.delay_us == 2.0
+    assert ctx.params["delay_us"] == 2.0
+    assert ctx.params.get("delay_us") == 2.0
+
+
 def test_grid_points_origin_offset():
     """Grid honors non-zero origin."""
     grid = {
@@ -247,6 +283,81 @@ async def test_perform_attempt_classifies_nothing(tmp_path):
         host_ctx=host_ctx,
     )
     assert result["outcome"] == "nothing"
+
+
+@pytest.mark.asyncio
+async def test_perform_attempt_host_script_can_access_params_three_ways(tmp_path):
+    """Host scripts using attr / dict-key / .get access to ctx.params all work."""
+    bits = make_ctx(tmp_path)
+    seen: Dict[str, Any] = {}
+
+    class TripleAccessScript:
+        @staticmethod
+        def attempt(ctx):
+            seen["attr"] = ctx.params.delay_us
+            seen["item"] = ctx.params["pulse_width_ns"]
+            seen["get"] = ctx.params.get("voltage_v")
+            seen["missing_attr"] = ctx.params.nonexistent
+            seen["missing_get"] = ctx.params.get("nonexistent", "fallback")
+            return {"fault": False, "heartbeat_alive": True, "campaign_complete": False}
+
+    host_ctx = HostScriptContext(
+        scaffold=bits["scaffold"], shouter=bits["shouter"], params={},
+        logbook=bits["logbook"], state=bits["state"],
+    )
+    await bits["orch"].perform_attempt(
+        verdict_timeout_s=0.1,
+        pulse_params={"delay_us": 1.5, "pulse_width_ns": 80, "voltage_v": 300},
+        host_script=TripleAccessScript(),
+        host_ctx=host_ctx,
+    )
+    assert seen["attr"] == 1.5
+    assert seen["item"] == 80
+    assert seen["get"] == 300
+    assert seen["missing_attr"] is None
+    assert seen["missing_get"] == "fallback"
+
+
+@pytest.mark.asyncio
+async def test_run_campaign_marks_phase_failed_when_all_attempts_error(tmp_path):
+    """100%-error campaigns must broadcast phase=failed, not phase=completed."""
+    bits = make_ctx(tmp_path)
+
+    # Monkey-patch _load_host_script to inject a setup-fine, always-raising attempt.
+    import control.orchestrator as mod
+
+    class FailingAttempt:
+        @staticmethod
+        def setup(ctx): pass
+        @staticmethod
+        def attempt(ctx): raise RuntimeError("attempt always raises")
+        @staticmethod
+        def teardown(ctx): pass
+
+    original = mod._load_host_script
+    mod._load_host_script = lambda pid: (FailingAttempt(), None)
+    try:
+        campaign = {
+            "id": "all-fail", "name": "test", "project_id": "_test",
+            "grid": {
+                "origin": (0, 0), "top_right": (1, 0),
+                "step_size_mm": 1.0, "z_min_mm": 0, "z_max_mm": 0, "z_step_mm": 1,
+            },
+            "sweep": {"attempts_per_point": 2},
+            "trigger_mode": "software", "shouter_auto_arm": False,
+            "verdict_timeout_ms": 50,
+        }
+        result = await bits["orch"].run_campaign(campaign)
+        assert result["ok"] is True
+        # Every attempt should have errored.
+        progress = [b[1] for b in bits["broadcasts"] if b[0] == "campaign_progress"]
+        phases = [p.get("phase") for p in progress]
+        assert "failed" in phases
+        # The failure payload includes the reason.
+        failed = [p for p in progress if p.get("phase") == "failed"][0]
+        assert "host_script" in failed.get("reason", "")
+    finally:
+        mod._load_host_script = original
 
 
 @pytest.mark.asyncio

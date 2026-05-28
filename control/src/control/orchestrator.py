@@ -42,6 +42,54 @@ LOGGER = logging.getLogger(__name__)
 # Host script support
 # --------------------------------------------------------------------------
 
+class ParamsView:
+    """Dict that also supports attribute access for host_script convenience.
+
+    Old host scripts that do ``ctx.params.delay_us`` → still work.
+    Old host scripts that do ``ctx.params["delay_us"]`` → also still work.
+    Old host scripts that do ``ctx.params.get("delay_us")`` → also still work.
+
+    Missing keys return ``None`` in all three forms (forgiving by design —
+    a host script written for one sweep dimension shouldn't crash when run
+    on a campaign that doesn't use that dimension).
+
+    Supports ``**params`` unpacking via ``keys()`` and ``__getitem__``.
+    """
+
+    __slots__ = ("_store",)
+
+    def __init__(self, data: Optional[Dict[str, Any]] = None) -> None:
+        object.__setattr__(self, "_store", dict(data) if data else {})
+
+    def __getattr__(self, key: str) -> Any:
+        # Only invoked when regular lookup misses (i.e. not _store).
+        return self._store.get(key)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._store.get(key)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._store
+
+    def __iter__(self):
+        return iter(self._store)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._store.get(key, default)
+
+    def keys(self):
+        return self._store.keys()
+
+    def items(self):
+        return self._store.items()
+
+    def values(self):
+        return self._store.values()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self._store)
+
+
 class HostScriptContext:
     """Small namespace passed to host script setup/attempt/teardown."""
 
@@ -49,14 +97,16 @@ class HostScriptContext:
         self,
         scaffold: Any,
         shouter: Any,
-        params: Dict[str, Any],
+        params: Any,
         logbook: Logbook,
         state: AppState,
     ) -> None:
         self.scaffold = scaffold
         self.target = scaffold  # legacy naming compat
         self.shouter = shouter
-        self.params = params
+        # Accept either a plain dict (older callers) or a ParamsView. Either
+        # way, wrap so host scripts get attribute access.
+        self.params = params if isinstance(params, ParamsView) else ParamsView(params or {})
         self.logbook = logbook
         self.state = state
 
@@ -254,12 +304,12 @@ class Orchestrator:
         # one-shot / free-run: A0 fires from Scaffold; no USB call here.
 
         # Host script reads the verdict (default: scaffold.wait_verdict).
-        host_ctx.params = {
-            **host_ctx.params,
+        host_ctx.params = ParamsView({
+            **host_ctx.params.to_dict(),
             "verdict_timeout_s": verdict_timeout_s,
             "trigger_mode": trigger_mode,
             **pulse_params,
-        }
+        })
         verdict: Dict[str, Any] = {
             "fault": False, "heartbeat_alive": False, "campaign_complete": False,
         }
@@ -465,6 +515,7 @@ class Orchestrator:
         })
 
         completed = 0
+        host_script_errors = 0
         try:
             # Auto-arm + configure ChipSHOUTER once at campaign start.
             if auto_arm and self.shouter.connected:
@@ -543,7 +594,7 @@ class Orchestrator:
                                 if self.stop_flag.is_set():
                                     break
                                 try:
-                                    await self.perform_attempt(
+                                    res = await self.perform_attempt(
                                         verdict_timeout_s=verdict_timeout_s,
                                         pulse_params=pulse_params,
                                         host_script=host_mod,
@@ -557,6 +608,12 @@ class Orchestrator:
                                         shouter_auto_arm=auto_arm,
                                     )
                                     completed += 1
+                                    # Defensive: track host-script errors
+                                    # separately from real shouter faults so
+                                    # we can refuse to report 100%-error
+                                    # campaigns as "completed".
+                                    if res.get("entry", {}).get("error"):
+                                        host_script_errors += 1
                                     self.state.scan.completed = completed
                                     if status is not None:
                                         status.completed_attempts = completed
@@ -606,17 +663,33 @@ class Orchestrator:
                 except Exception:
                     pass
 
-            phase = "stopped" if self.stop_flag.is_set() else "completed"
-            self.broadcast("campaign_progress", {
+            if self.stop_flag.is_set():
+                phase = "stopped"
+                reason: Optional[str] = None
+            elif completed > 0 and host_script_errors == completed:
+                phase = "failed"
+                reason = (
+                    f"every host_script.attempt() raised "
+                    f"({host_script_errors}/{completed}) — check host/run.py"
+                )
+            else:
+                phase = "completed"
+                reason = None
+            payload: Dict[str, Any] = {
                 "campaign_id": campaign_id,
                 "phase": phase,
                 "completed": completed,
                 "total": total,
                 "current_xyz": None,
                 "current_sweep": None,
-            })
+            }
+            if reason:
+                payload["reason"] = reason
+            self.broadcast("campaign_progress", payload)
             LOGGER.info(
-                "Campaign %s %s: %d / %d attempts", campaign_id, phase, completed, total,
+                "Campaign %s %s: %d / %d attempts%s",
+                campaign_id, phase, completed, total,
+                f" — {reason}" if reason else "",
             )
 
         return {"ok": True, "completed": completed, "total": total, "campaign_id": campaign_id}
