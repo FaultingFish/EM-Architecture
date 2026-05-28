@@ -394,3 +394,48 @@ byte-identical.
 
 **View**: optional — surface the reset endpoint as a button on the
 Host tab in the project editor. Not required for V1.
+
+---
+
+## 2026-05-28 06:00 UTC  control  →  develop, view: [fyi] ScaffoldAdapter pin I/O surface + one-shot chain API fix
+
+### Pin I/O surface (new)
+
+`control/src/control/adapters/scaffold.py` gained generic pin methods used by per-project `host/run.py` scripts:
+
+```
+set_d_output(idx)   set_d_input(idx)
+write_d(idx, value) read_d(idx)
+```
+
+Per-pin aliases that match the existing host-script template literally so unmigrated `host/run.py` files start working without manual edits:
+
+```
+set_d0_output()  set_d0(value)
+set_d1_input()   read_d1()
+set_d2_input()   read_d2()
+set_d3_input()   read_d3()
+```
+
+Prefer the generic `set_d_output(idx)` / `set_d_input(idx)` / `write_d(idx, val)` / `read_d(idx)` form in new templates. The per-pin aliases will stay around (they're one-line wrappers), but new code is more readable using indices.
+
+Also added `ScaffoldAdapter.raw` (property) that returns the underlying `scaffold.Scaffold` instance for host scripts that need direct access to library internals. Use sparingly — the wrapper exists for safety.
+
+**Note on donjon-scaffold IO model**: there's no separate "direction" flag on the pin. Direction is implicit — writing `.value = 0/1` drives the output, `.value = None` is high-Z, reading `.value` senses input. `set_d_output(idx)` drives the pin low to claim it; `set_d_input(idx)` puts it in high-Z.
+
+### one-shot trigger mode fix
+
+The previous code called `self._impl.chain0.signal("trigger")` and `chain0.signal("out")` — donjon-scaffold 0.9.5's Chain class doesn't have a `.signal()` method. The actual API: `chain0.events[i]` are input signals (rising edges advance the chain), `chain0.trigger` is the output signal. Fixed wiring:
+
+```python
+sc.sig_connect(sc.d0, sc.chain0.events[0])
+sc.sig_connect(sc.chain0.trigger, sc.a0)
+```
+
+Free-run mode similarly uses `sc.pgen0.out` (not `.signal("out")`). Both modes now wrap in try/except and fall back to "software" with a logged WARN if the underlying lib still rejects the wiring — campaign startup won't break over an unavailable trigger mode.
+
+The startup log line for `set_trigger_mode` dropped from INFO to DEBUG (the WARNING-level fallback path is still WARNING when it actually triggers).
+
+### Defensive setup-failure cleanup
+
+`Orchestrator.run_campaign` now emits both an `error` event **and** a `campaign_progress {phase: "failed"}` event when host-script `setup()` raises. Also disarms the ChipSHOUTER on the way out as a safety belt. View can dispatch on `campaign_progress.phase == "failed"` to clear any "running" UI state without needing to poll campaign status.

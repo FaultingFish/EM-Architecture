@@ -437,6 +437,21 @@ class Orchestrator:
                 "campaign_id": campaign_id,
                 "detail": f"Host script setup failed: {exc}",
             })
+            self.broadcast("campaign_progress", {
+                "campaign_id": campaign_id,
+                "phase": "failed",
+                "completed": 0,
+                "total": total,
+                "current_xyz": None,
+                "current_sweep": None,
+            })
+            # Defensive: ensure shouter is safely disarmed even if setup
+            # ran far enough to leave it armed.
+            if self.shouter.connected:
+                try:
+                    await shouter_worker.call(self.shouter.disarm_safe)
+                except Exception:
+                    pass
             self.state.scan.active = False
             return {"ok": False, "reason": f"setup failed: {exc}"}
 

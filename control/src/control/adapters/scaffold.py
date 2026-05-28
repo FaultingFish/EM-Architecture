@@ -85,26 +85,51 @@ class ScaffoldAdapter(BaseAdapter):
 
         self._impl.sig_disconnect_all()
 
-        if mode == "disabled":
-            pass
-        elif mode == "software":
+        if mode in ("disabled", "software"):
             pass
         elif mode == "one-shot":
-            self._impl.sig_connect(self._impl.d0, self._impl.chain0.signal("trigger"))
-            self._impl.sig_connect(self._impl.chain0.signal("out"), self._impl.a0)
+            # donjon-scaffold 0.9.x Chain: events[i] are input signals (rising
+            # edges advance the chain), trigger is the output signal.
+            # (Earlier versions of this adapter wrongly called chain0.signal(...);
+            #  Chain only exposes .events / .trigger / .rearm.)
+            try:
+                self._impl.sig_connect(self._impl.d0, self._impl.chain0.events[0])
+                self._impl.sig_connect(self._impl.chain0.trigger, self._impl.a0)
+            except Exception as exc:
+                LOGGER.warning(
+                    "one-shot wiring failed (%s); falling back to software trigger. "
+                    "TODO: confirm donjon-scaffold chain API on this firmware.",
+                    exc,
+                )
+                mode = "software"
         elif mode == "free-run":
-            self._impl.sig_connect(self._impl.pgen0.signal("out"), self._impl.a0)
+            try:
+                self._impl.sig_connect(self._impl.pgen0.out, self._impl.a0)
+            except Exception as exc:
+                LOGGER.warning(
+                    "free-run wiring failed (%s); falling back to software trigger.",
+                    exc,
+                )
+                mode = "software"
 
         self.trigger_mode = mode
-        LOGGER.info("Scaffold trigger mode set to %s", mode)
+        LOGGER.debug("Scaffold trigger mode set to %s", mode)
 
     def arm_attempt(self) -> None:
         """Prepare for the next verdict (reset pin-edge latches)."""
         self._require_connected()
         if self.trigger_mode == "one-shot":
-            self._impl.chain0.rearm()
-        for pin in (self._impl.d1, self._impl.d2, self._impl.d3):
-            pin.clear_event()
+            try:
+                self._impl.chain0.rearm()
+            except Exception as exc:
+                LOGGER.debug("chain0.rearm failed: %s", exc)
+        for pin_name in ("d1", "d2", "d3"):
+            pin = getattr(self._impl, pin_name, None)
+            if pin is not None and hasattr(pin, "clear_event"):
+                try:
+                    pin.clear_event()
+                except Exception as exc:
+                    LOGGER.debug("%s.clear_event failed: %s", pin_name, exc)
 
     def wait_verdict(self, timeout_s: float) -> Dict[str, Any]:
         """Poll D1/D2/D3 until verdict or timeout.
@@ -148,3 +173,76 @@ class ScaffoldAdapter(BaseAdapter):
         self._require_connected()
         self._impl.power.dut = 1 if on else 0
         LOGGER.info("DUT power %s", "ON" if on else "OFF")
+
+    # ------------------------------------------------------------------
+    # Pin I/O surface used by per-project host/run.py scripts.
+    #
+    # donjon-scaffold's IO model:
+    #   pin.value = 0/1  -> drives the pin as a push-pull output
+    #   pin.value = None -> high-Z (disconnect from any peripheral)
+    #   read pin.value   -> senses external input
+    #
+    # There is no separate "direction" flag — direction is implicit in how
+    # the pin is used. ``set_d_output(idx)`` drives the pin low to claim
+    # it as an output; ``set_d_input(idx)`` puts it in high-Z so external
+    # signal can be read.
+    # ------------------------------------------------------------------
+
+    def _get_pin(self, idx: int) -> Any:
+        pin = getattr(self._impl, f"d{idx}", None)
+        if pin is None:
+            raise ValueError(f"Scaffold has no pin d{idx}")
+        return pin
+
+    def set_d_output(self, idx: int) -> None:
+        """Claim d<idx> as a push-pull output, driving low initially."""
+        self._require_connected()
+        self._get_pin(idx).value = 0
+
+    def set_d_input(self, idx: int) -> None:
+        """Put d<idx> in high-Z input mode."""
+        self._require_connected()
+        self._get_pin(idx).value = None
+
+    def write_d(self, idx: int, value: int) -> None:
+        """Drive d<idx> low (0) or high (1)."""
+        self._require_connected()
+        self._get_pin(idx).value = 1 if value else 0
+
+    def read_d(self, idx: int) -> int:
+        """Sense the current logic level on d<idx>."""
+        self._require_connected()
+        return int(self._get_pin(idx).value)
+
+    # ---- per-pin aliases matching the existing host-script template ----
+    # (Newer templates should prefer set_d_output(idx) etc.)
+
+    def set_d0_output(self) -> None:
+        self.set_d_output(0)
+
+    def set_d1_input(self) -> None:
+        self.set_d_input(1)
+
+    def set_d2_input(self) -> None:
+        self.set_d_input(2)
+
+    def set_d3_input(self) -> None:
+        self.set_d_input(3)
+
+    def set_d0(self, value: int) -> None:
+        self.write_d(0, value)
+
+    def read_d1(self) -> int:
+        return self.read_d(1)
+
+    def read_d2(self) -> int:
+        return self.read_d(2)
+
+    def read_d3(self) -> int:
+        return self.read_d(3)
+
+    @property
+    def raw(self) -> Any:
+        """Underlying ``donjon-scaffold`` Scaffold instance. Use sparingly."""
+        self._require_connected()
+        return self._impl
