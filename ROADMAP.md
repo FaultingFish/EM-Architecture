@@ -21,7 +21,7 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 
 ## V1+ nice-to-haves
 
-- [ ] **Calibration wizard** — 3-step UI flow: origin → top-right → confirm with 3D preview. **(view)**
+- [x] **Calibration wizard** — 3-step UI flow: origin → top-right → confirm with 3D preview. **(view)**
 - [x] **Hardware status panel** — always-visible header strip with device states + ChipSHOUTER voltage/faults. **(view)**
 - [ ] **Pre-flight checklist** — campaign-start gate verifying all devices connected, firmware flashed matches build_sha, voltage in safety bounds, ARM gate behavior. **(control endpoint + view UI)**
 - [ ] **Time + cost estimator** — display total pulse count + ETA on the campaign config form before submit. **(view, reads stats from existing endpoints)**

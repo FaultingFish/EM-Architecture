@@ -41,6 +41,7 @@
 
     <nav>
       <a href="/" class:active={currentPath === '/'}>Mission</a>
+      <a href="/calibrate" class:active={currentPath === '/calibrate'}>Calibrate</a>
       <a href="/campaign" class:active={currentPath.startsWith('/campaign')}>Campaign</a>
       <a href="/runs" class:active={currentPath === '/runs'}>Runs</a>
       <a href="/heatmap" class:active={currentPath === '/heatmap'}>Heatmap</a>

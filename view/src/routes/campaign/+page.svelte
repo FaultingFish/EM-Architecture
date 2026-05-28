@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import SweepConfig from '$lib/components/SweepConfig.svelte';
   import GridConfig from '$lib/components/GridConfig.svelte';
   import { listProjects } from '$lib/api/develop';
@@ -39,6 +40,21 @@
   };
 
   onMount(async () => {
+    // Pre-populate grid from calibration wizard query params, if present.
+    const qp = $page.url.searchParams;
+    const ox = qp.get('origin_x');
+    const oy = qp.get('origin_y');
+    const tx = qp.get('top_right_x');
+    const ty = qp.get('top_right_y');
+    if (ox != null && oy != null && tx != null && ty != null) {
+      grid = {
+        ...grid,
+        origin: [parseFloat(ox), parseFloat(oy)],
+        top_right: [parseFloat(tx), parseFloat(ty)],
+      };
+      toasts.info('Grid pre-populated from calibration');
+    }
+
     try {
       const result = await listProjects();
       projects = Array.isArray(result) ? result : result?.projects ?? [];

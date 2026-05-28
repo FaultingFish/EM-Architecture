@@ -96,6 +96,14 @@ export async function home() {
   return request('POST', '/motion/home');
 }
 
+export async function setOrigin() {
+  return request('POST', '/motion/set_origin');
+}
+
+export async function setTopRight(x: number, y: number) {
+  return request('POST', '/motion/set_top_right', { x, y });
+}
+
 export async function connectDevice(id: string, port?: string) {
   return request('POST', `/devices/${id}/connect`, port ? { port } : undefined);
 }
