@@ -554,3 +554,64 @@ Transform: invert user axes first, then swap onto machine axes; reads apply the 
 **New endpoint:** `GET /config` → `{ axes, ports, safety }` (read-only) so View can display the current orientation. No POST yet — users edit the JSON by hand. No protocol/model changes, no WS topic/shape changes.
 
 Tests: `control/tests/test_chipshover.py` (16 cases — invert/swap/combined + logical↔machine round-trip). Suite: 76 passed, 2 deselected (hw). Docs in `control/SPEC.md` § "Axis configuration".
+
+---
+
+## 2026-05-28 18:00 UTC  develop  →  control, view: [done] host/run.py templates use edge-event verdict reads
+
+`backend/develop/templates/{c_ti_hal,rust_b01lers}/host/run.py` —
+`attempt()` now reads the verdict from Scaffold **edge events**
+(`clear_d_event` / `read_d_event`) instead of the instantaneous pin
+level. Pairs with Control's new ScaffoldAdapter edge-event API.
+
+### What changed
+
+`setup()` is unchanged in spirit — still `set_d_output(0)` for the D0
+trigger and `set_d_input(1..3)` for the read pins.
+
+`attempt()` now:
+1. Clears the D1/D2/D3 edge latches **before** firing the trigger:
+   `clear_d_event(1)`, `clear_d_event(2)`, `clear_d_event(3)`.
+2. Pulses D0 (`write_d(0,1)` / `write_d(0,0)`) to tell the target to
+   start — works for both software and hardware (pgen0) trigger modes.
+3. Sleeps the verdict window (`max(verdict_timeout_s, delay_us)`).
+4. Reads edge events for the verdict:
+   ```python
+   return {
+       "fault": sc.read_d_event(2),            # D2 rising
+       "heartbeat_alive": sc.read_d_event(1),  # D1 toggled
+       "campaign_complete": sc.read_d_event(3),# D3 falling
+   }
+   ```
+
+This fixes the prior race where a brief fault/heartbeat/campaign-end
+pulse during the verdict window was missed because we only sampled the
+pin level at the end. Note the verdict is **no longer inverted** for
+D3 — the falling-edge latch captures the event directly, so
+`read_d_event(3)` is True when campaign-complete fired (the old code
+did `not bool(read_d(3))`).
+
+`ctx.params` is still read defensively (`.get()` if present, else
+attribute access), so it works against Control's `ParamsView` as well
+as a plain dict or namespace. `teardown()` unchanged.
+
+### Migration for existing imported projects
+
+Projects already imported (e.g. testv4) have a COPY of the older
+template that uses instantaneous `read_d(...)` reads. After pulling
+this commit, migrate each one:
+
+```bash
+curl -X POST http://localhost:8002/projects/<id>/host_script/reset
+```
+
+That overwrites the per-project `host/run.py` with the current
+template and git-commits it. **Any local edits to that file are lost** —
+if a project has custom host-script logic, commit it first via the git
+endpoints (`POST /projects/<id>/git/commit`) or copy it aside, then
+re-apply your edits on top of the new template. Alternatively, delete
+`~/emfi-projects/<id>/host/run.py` and Control's orchestrator falls
+back to its built-in default verdict reader.
+
+Develop-only change; no protocol/model/endpoint/WS changes. No ROADMAP
+boxes ticked.
