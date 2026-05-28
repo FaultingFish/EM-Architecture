@@ -20,22 +20,53 @@ from control.adapters.scaffold import ScaffoldAdapter
 class _FakePin:
     """Minimal IO stand-in. Records what gets written."""
 
-    def __init__(self) -> None:
+    def __init__(self, name: str = "pin") -> None:
         self.value = 0  # getter-only on real IO; on the fake we use plain attr
+        self.name = name
+
+
+class _FakePgen:
+    """Pulse-generator stand-in.
+
+    Mirrors the real lib's second-based ``delay``/``width`` properties: the
+    adapter assigns seconds, so the fake just stores them. ``start``/``out``
+    are sentinel signal objects used to assert the sig_connect wiring.
+    """
+
+    def __init__(self) -> None:
+        self.start = "pgen0.start"
+        self.out = "pgen0.out"
+        self.delay = 0.0
+        self.width = 0.0
+        self.count = 0
+        self.polarity = None
+        self.delay_min = 1e-8  # one 100 MHz tick = 10 ns
+        self.width_min = 1e-8
 
 
 class _FakeImpl:
-    """Just enough donjon-scaffold surface for the adapter's pin methods."""
+    """Just enough donjon-scaffold surface for the adapter's methods."""
 
-    def __init__(self) -> None:
-        self.d0 = _FakePin()
-        self.d1 = _FakePin()
-        self.d2 = _FakePin()
-        self.d3 = _FakePin()
+    def __init__(self, raise_on_sig_connect: bool = False) -> None:
+        self.d0 = _FakePin("d0")
+        self.d1 = _FakePin("d1")
+        self.d2 = _FakePin("d2")
+        self.d3 = _FakePin("d3")
+        self.a0 = _FakePin("a0")
+        self.pgen0 = _FakePgen()
+        self.sys_freq = 100e6
+        self.version = "0.9"
         self.sig_connect_calls: List[Tuple[Any, Any]] = []
+        self.disconnect_all_count = 0
+        self._raise_on_sig_connect = raise_on_sig_connect
 
     def sig_connect(self, a: Any, b: Any) -> None:
+        if self._raise_on_sig_connect:
+            raise RuntimeError("Failed to connect (simulated)")
         self.sig_connect_calls.append((a, b))
+
+    def sig_disconnect_all(self) -> None:
+        self.disconnect_all_count += 1
 
 
 def test_set_d_output_routes_constant_zero_via_sig_connect():
@@ -114,6 +145,125 @@ def test_unknown_pin_raises():
     sa._impl = _FakeImpl()
     with pytest.raises(ValueError, match="d99"):
         sa.set_d_output(99)
+
+
+# --------------------------------------------------------------------------
+# Hardware trigger wiring (pgen0)
+# --------------------------------------------------------------------------
+
+def test_one_shot_wires_d0_to_pgen_to_a0():
+    from scaffold import Polarity
+
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    sa.set_trigger_mode("one-shot")
+
+    # Matrix cleared before rewiring.
+    assert impl.disconnect_all_count == 1
+    # One pulse per trigger edge, active-high.
+    assert impl.pgen0.count == 1
+    assert impl.pgen0.polarity == Polarity.HIGH_ON_PULSES
+    # d0 (source) feeds pgen0.start (dest); pgen0.out (source) feeds a0 (dest).
+    assert impl.sig_connect_calls == [
+        (impl.pgen0.start, impl.d0),
+        (impl.a0, impl.pgen0.out),
+    ]
+    assert sa.trigger_mode == "one-shot"
+    assert sa.last_trigger_mode_error is None
+
+
+def test_free_run_wires_same_path_as_one_shot():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    sa.set_trigger_mode("free-run")
+    assert impl.sig_connect_calls == [
+        (impl.pgen0.start, impl.d0),
+        (impl.a0, impl.pgen0.out),
+    ]
+    assert sa.trigger_mode == "free-run"
+
+
+def test_software_mode_leaves_a0_idle():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    sa.set_trigger_mode("software")
+    # Matrix cleared, but no pgen wiring.
+    assert impl.disconnect_all_count == 1
+    assert impl.sig_connect_calls == []
+    assert sa.trigger_mode == "software"
+
+
+def test_one_shot_wiring_failure_raises_and_records_error():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl(raise_on_sig_connect=True)
+    sa._impl = impl
+    with pytest.raises(RuntimeError, match="hardware trigger wiring failed"):
+        sa.set_trigger_mode("one-shot")
+    # Surfaced for the orchestrator to inspect; no silent software fallback.
+    assert sa.last_trigger_mode_error is not None
+    assert "Failed to connect" in sa.last_trigger_mode_error
+    assert sa.trigger_mode != "one-shot"
+
+
+def test_set_pulse_delay_us_converts_to_seconds():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    sa.set_pulse_delay_us(1.0)
+    assert impl.pgen0.delay == pytest.approx(1e-6)
+    sa.set_pulse_delay_us(2.5)
+    assert impl.pgen0.delay == pytest.approx(2.5e-6)
+
+
+def test_set_pulse_width_ns_converts_to_seconds():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    sa.set_pulse_width_ns(80.0)
+    assert impl.pgen0.width == pytest.approx(80e-9)
+
+
+def test_pulse_timing_clamps_to_hardware_minimum():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    # A zero delay isn't representable; clamp to one clock tick (delay_min).
+    sa.set_pulse_delay_us(0.0)
+    assert impl.pgen0.delay == pytest.approx(impl.pgen0.delay_min)
+    sa.set_pulse_width_ns(0.0)
+    assert impl.pgen0.width == pytest.approx(impl.pgen0.width_min)
+
+
+def test_invalid_trigger_mode_raises():
+    sa = ScaffoldAdapter()
+    sa._impl = _FakeImpl()
+    with pytest.raises(ValueError, match="Invalid trigger mode"):
+        sa.set_trigger_mode("turbo")
+
+
+@pytest.mark.hw
+def test_scaffold_one_shot_hardware_pulse():
+    """Hardware: configure one-shot, set 1 us delay + 100 ns width.
+
+    Verification (manual, with a scope on A0):
+      - Toggle D0 high via the raw API (or let the target assert USER_TEST).
+      - A0 should fire ONE pulse ~1 us after the D0 rising edge, ~100 ns wide.
+    Run with ``pytest -m hw`` on the lab box; expects /dev/ttyUSB0.
+    """
+    sa = ScaffoldAdapter()
+    sa.connect("/dev/ttyUSB0")
+    try:
+        sa.set_trigger_mode("one-shot")
+        sa.set_pulse_delay_us(1.0)
+        sa.set_pulse_width_ns(100.0)
+        # Drive D0 high manually to trigger one pulse (scope A0 to confirm).
+        sa.raw.pgen0.fire()  # also fireable directly for a bench check
+    finally:
+        sa.set_trigger_mode("software")
+        sa.disconnect()
 
 
 @pytest.mark.hw

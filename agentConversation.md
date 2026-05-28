@@ -501,3 +501,39 @@ View: a `campaign_progress` event with `phase=failed` now carries an optional `r
   - `test_run_campaign_marks_phase_failed_when_all_attempts_error` — 100%-error campaigns broadcast `phase=failed` with a reason, not `phase=completed`.
 
 Suite: **50 passed, 1 deselected** (the hw round-trip). No ROADMAP boxes ticked — these are hot-fixes.
+
+---
+
+## 2026-05-28 02:40 UTC  control  →  view, develop: [done] Hardware-triggered glitching via Scaffold pgen0 (one-shot now real, not software fallback)
+
+Campaigns with `trigger_mode="one-shot"` were silently falling back to USB-fired (software) pulses — the log showed `one-shot wiring failed (Failed to connect '/io/d0' << '/chain0/event0')`. Hardware triggering now works.
+
+### Root cause
+The old wiring used the **chain** module with reversed `sig_connect` direction. Introspecting donjon-scaffold 0.9.5:
+- `sig_connect(a, b)` feeds **destination** `a` from **source** `b` (i.e. `a << b`).
+- Chain `events[i]` are matrix *destinations* (not sources) — so `sig_connect(d0, chain0.events[0])` is doubly wrong.
+- The right module for "delay then pulse" is **pgen0**, not chain.
+
+### Fix (`control/src/control/adapters/scaffold.py`)
+`set_trigger_mode("one-shot")` / `"free-run"` now wires:
+```
+sig_connect(pgen0.start, d0)   # D0 rising edge starts the pulse generator
+sig_connect(a0, pgen0.out)     # pgen output drives the A0 ChipSHOUTER trigger
+pgen0.count = 1; pgen0.polarity = HIGH_ON_PULSES
+```
+Two new per-attempt setters: `set_pulse_delay_us(us)` and `set_pulse_width_ns(ns)`. **Important for anyone touching pgen:** `pgen0.delay`/`pgen0.width` are float properties **in seconds** — the lib converts to 100 MHz ticks internally. Don't write raw tick registers. Values are clamped to one clock tick (10 ns) minimum (a 0 delay isn't representable). `CLOCK_MHZ`/`_sys_freq` are cached from the board's reported `sys_freq` on connect.
+
+No silent degrade anymore: if hardware wiring fails, `set_trigger_mode` raises `RuntimeError` and sets `last_trigger_mode_error`. (free-run currently shares the one-shot wiring — one pulse per D0 edge; the chain-based "fire on Nth event" gating is not implemented with pgen and wasn't needed.)
+
+### Orchestrator (`control/src/control/orchestrator.py`)
+Campaign-start sequence reordered to: **auto-arm ChipSHOUTER → `set_trigger_mode` → host `setup()`** (set_trigger_mode runs `sig_disconnect_all`, so it must precede host pin setup). If `set_trigger_mode` raises, the campaign **aborts** with `phase=failed` + an `error` event (`detail: "hardware trigger wiring failed: …"`) and the ChipSHOUTER is disarmed — it no longer quietly runs in software mode when the user asked for hardware.
+
+Per attempt, in `one-shot`/`free-run`: the orchestrator programs `pgen0.delay`/`width` from the sweep's `delay_us`/`pulse_width_ns` (defaults 1.0 µs / 80 ns) and does **not** call `shouter.pulse()` — the pulse fires autonomously on the target's D0 edge during the verdict window. Software mode behavior is unchanged.
+
+### View — nothing required, but FYI
+No new WS topics or payload shapes. The only new thing you might surface: a `campaign_progress` `phase=failed` with `detail`/`reason` already exists (from the prior hot-fix) and is now also emitted on hardware-trigger-wiring failure. If the user picks one-shot and the board can't wire it, they'll get that failure toast instead of a degraded software-mode run.
+
+### Tests / validation
+- `tests/test_scaffold.py`: new pgen0 fake + tests asserting the one-shot `sig_connect` path, `count`/`polarity`, seconds-conversion for delay/width, min-clamp, and that a wiring failure raises + records `last_trigger_mode_error`. Plus a `@pytest.mark.hw` bench test (`set 1 µs / 100 ns`, scope A0).
+- `tests/test_orchestrator.py`: one-shot campaign programs pgen per swept delay and fires **zero** USB pulses; a `set_trigger_mode` failure aborts the campaign with `phase=failed`.
+- Suite: **60 passed, 2 deselected** (hw). Hardware scope-verification (A0 fires ~1 µs after D0 edge, ~100 ns wide) is documented for the lab box; run `pytest -m hw` there.

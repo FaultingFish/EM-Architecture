@@ -13,8 +13,20 @@ Pin map (from old-em-setup/HANDOFF.md):
 Trigger modes:
     disabled  — A0 idle, no automatic trigger
     software  — A0 idle; ChipSHOUTER fires via USB (pulse())
-    one-shot  — Scaffold chain module fires A0 once on rising D0
-    free-run  — A0 continuously connected to pgen output
+    one-shot  — hardware: D0 rising edge → pgen0 (delay, then pulse) → A0
+                (ChipSHOUTER external trigger), one pulse per edge.
+    free-run  — same wiring as one-shot in this implementation (see note).
+
+Hardware-trigger implementation (donjon-scaffold 0.9.5, introspected):
+    - ``sig_connect(a, b)`` feeds destination ``a`` with source ``b`` (a << b).
+    - ``pgen0.start`` is a matrix *destination* fed by ``d0`` (the source).
+    - ``pgen0.out`` is a matrix *source* that drives ``a0`` (the destination).
+    - ``pgen0.delay`` / ``pgen0.width`` are float properties in *seconds*;
+      the library converts to 100 MHz clock ticks internally. We therefore
+      set them in seconds rather than computing raw tick registers.
+    The earlier chain0-based wiring failed because chain ``events`` are
+    matrix destinations (not sources) and the connect direction was
+    reversed; pgen0 is the correct module for delay-then-pulse generation.
 """
 
 from __future__ import annotations
@@ -28,17 +40,26 @@ from control.adapters.base import BaseAdapter
 LOGGER = logging.getLogger(__name__)
 
 _VALID_TRIGGER_MODES = ("disabled", "software", "one-shot", "free-run")
+_HARDWARE_TRIGGER_MODES = ("one-shot", "free-run")
 
 
 class ScaffoldAdapter(BaseAdapter):
     name = "scaffold"
     trigger_mode: str = "software"
+    # System clock in MHz. Overwritten from the board's reported sys_freq on
+    # connect; 100 MHz is the Scaffold default. Informational — the actual
+    # tick conversion is done by the lib's second-based pgen properties.
+    CLOCK_MHZ: float = 100.0
 
     def __init__(self) -> None:
         self._impl = None
         self._port: Optional[str] = None
         self._last_error: Optional[str] = None
         self._version: Optional[str] = None
+        self._sys_freq: float = 100e6
+        # Last hardware-trigger wiring failure, surfaced so the orchestrator
+        # can abort rather than silently fall back to software.
+        self.last_trigger_mode_error: Optional[str] = None
 
     def connect(self, port: Optional[str] = None) -> None:
         if port is None:
@@ -53,8 +74,15 @@ class ScaffoldAdapter(BaseAdapter):
         self._impl = Scaffold(port)
         self._port = port
         self._version = str(self._impl.version)
+        # Cache the system clock so delay/width conversions and logs are
+        # correct even if a future board reports a non-100 MHz frequency.
+        self._sys_freq = float(getattr(self._impl, "sys_freq", 100e6))
+        self.CLOCK_MHZ = self._sys_freq / 1e6
         self._last_error = None
-        LOGGER.info("Scaffold connected — firmware %s", self._version)
+        LOGGER.info(
+            "Scaffold connected — firmware %s, clock %.0f MHz",
+            self._version, self.CLOCK_MHZ,
+        )
 
     def disconnect(self) -> None:
         if self._impl is not None:
@@ -79,50 +107,100 @@ class ScaffoldAdapter(BaseAdapter):
             raise RuntimeError("Scaffold is not connected")
 
     def set_trigger_mode(self, mode: str) -> None:
-        if mode not in _VALID_TRIGGER_MODES:
-            raise ValueError(f"Invalid trigger mode: {mode}. Must be one of {_VALID_TRIGGER_MODES}")
-        self._require_connected()
+        """Configure the A0 trigger path for the given mode.
 
-        self._impl.sig_disconnect_all()
+        For hardware modes (one-shot / free-run), wire the pulse generator
+        so a rising edge on D0 (target USER_TEST) starts pgen0, which after
+        the configured delay drives A0 (ChipSHOUTER external trigger) for the
+        configured width — all in hardware, zero USB jitter.
+
+        Raises RuntimeError if hardware wiring fails (does NOT silently fall
+        back to software). ``last_trigger_mode_error`` is also set so the
+        caller can inspect the failure.
+        """
+        if mode not in _VALID_TRIGGER_MODES:
+            raise ValueError(
+                f"Invalid trigger mode: {mode}. Must be one of {_VALID_TRIGGER_MODES}"
+            )
+        self._require_connected()
+        self.last_trigger_mode_error = None
+
+        sc = self._impl
+        # Clear any previous routing before (re)wiring.
+        sc.sig_disconnect_all()
 
         if mode in ("disabled", "software"):
-            pass
-        elif mode == "one-shot":
-            # donjon-scaffold 0.9.x Chain: events[i] are input signals (rising
-            # edges advance the chain), trigger is the output signal.
-            # (Earlier versions of this adapter wrongly called chain0.signal(...);
-            #  Chain only exposes .events / .trigger / .rearm.)
-            try:
-                self._impl.sig_connect(self._impl.d0, self._impl.chain0.events[0])
-                self._impl.sig_connect(self._impl.chain0.trigger, self._impl.a0)
-            except Exception as exc:
-                LOGGER.warning(
-                    "one-shot wiring failed (%s); falling back to software trigger. "
-                    "TODO: confirm donjon-scaffold chain API on this firmware.",
-                    exc,
-                )
-                mode = "software"
-        elif mode == "free-run":
-            try:
-                self._impl.sig_connect(self._impl.pgen0.out, self._impl.a0)
-            except Exception as exc:
-                LOGGER.warning(
-                    "free-run wiring failed (%s); falling back to software trigger.",
-                    exc,
-                )
-                mode = "software"
+            self.trigger_mode = mode
+            LOGGER.info("Scaffold trigger mode set to %s (A0 idle)", mode)
+            return
+
+        # Hardware modes: wire d0 -> pgen0.start, pgen0.out -> a0.
+        try:
+            from scaffold import Polarity
+
+            pgen = sc.pgen0
+            # One pulse per trigger edge. (free-run uses the same wiring; the
+            # chain-based "fire after Nth event" gating that historically
+            # distinguished the two modes is not implemented with pgen — both
+            # produce one precise pulse per D0 rising edge, which is what the
+            # campaign loop needs.)
+            pgen.count = 1
+            # Active-high trigger pulse (idle low, high during the pulse).
+            pgen.polarity = Polarity.HIGH_ON_PULSES
+            # D0 rising edge starts the pulse generator (d0 is the source).
+            sc.sig_connect(pgen.start, sc.d0)
+            # Pulse generator output drives the A0 trigger to the ChipSHOUTER.
+            sc.sig_connect(sc.a0, pgen.out)
+        except Exception as exc:
+            self.last_trigger_mode_error = f"{type(exc).__name__}: {exc}"
+            LOGGER.error(
+                "Hardware trigger wiring failed for mode '%s': %s", mode, exc
+            )
+            # Leave the matrix disconnected (A0 idle) and propagate so the
+            # orchestrator can abort instead of silently degrading.
+            raise RuntimeError(
+                f"hardware trigger wiring failed for '{mode}': {exc}"
+            ) from exc
 
         self.trigger_mode = mode
-        LOGGER.debug("Scaffold trigger mode set to %s", mode)
+        LOGGER.info(
+            "Scaffold trigger mode set to %s "
+            "(d0 → pgen0.start, pgen0.out → a0, delay/width per attempt)",
+            mode,
+        )
+
+    def set_pulse_delay_us(self, delay_us: float) -> None:
+        """Set the pgen0 delay (trigger edge → pulse start), in microseconds.
+
+        The lib's ``pgen0.delay`` setter takes seconds and converts to clock
+        ticks internally, so we just convert µs → s. Clamped to the hardware
+        minimum (one clock tick) since a zero delay is not representable.
+        """
+        self._require_connected()
+        pgen = self._impl.pgen0
+        seconds = max(float(delay_us) * 1e-6, pgen.delay_min)
+        pgen.delay = seconds
+        LOGGER.debug("pgen0 delay set to %.3f us", seconds * 1e6)
+
+    def set_pulse_width_ns(self, width_ns: float) -> None:
+        """Set the pgen0 pulse width (A0 assertion duration), in nanoseconds.
+
+        Clamped to the hardware minimum (one clock tick).
+        """
+        self._require_connected()
+        pgen = self._impl.pgen0
+        seconds = max(float(width_ns) * 1e-9, pgen.width_min)
+        pgen.width = seconds
+        LOGGER.debug("pgen0 width set to %.1f ns", seconds * 1e9)
 
     def arm_attempt(self) -> None:
-        """Prepare for the next verdict (reset pin-edge latches)."""
+        """Prepare for the next verdict (reset pin-edge latches).
+
+        No pgen re-arm is needed in hardware modes: the pulse generator
+        fires automatically on each rising edge of its ``start`` signal
+        (D0), so it is ready for the next attempt without intervention.
+        """
         self._require_connected()
-        if self.trigger_mode == "one-shot":
-            try:
-                self._impl.chain0.rearm()
-            except Exception as exc:
-                LOGGER.debug("chain0.rearm failed: %s", exc)
         for pin_name in ("d1", "d2", "d3"):
             pin = getattr(self._impl, pin_name, None)
             if pin is not None and hasattr(pin, "clear_event"):

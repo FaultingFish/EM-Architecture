@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -76,9 +76,20 @@ class FakeScaffold:
         self.pin_writes: List[tuple] = []
         self.pin_outputs: List[int] = []
         self.pin_inputs: List[int] = []
+        self.pulse_delays_us: List[float] = []
+        self.pulse_widths_ns: List[float] = []
+        self.trigger_mode_error: Optional[Exception] = None
 
     def set_trigger_mode(self, mode: str) -> None:
+        if self.trigger_mode_error is not None:
+            raise self.trigger_mode_error
         self.trigger_mode = mode
+
+    def set_pulse_delay_us(self, delay_us: float) -> None:
+        self.pulse_delays_us.append(delay_us)
+
+    def set_pulse_width_ns(self, width_ns: float) -> None:
+        self.pulse_widths_ns.append(width_ns)
 
     def arm_attempt(self) -> None:
         pass
@@ -480,6 +491,69 @@ async def test_run_campaign_broadcasts_position_and_attempt(tmp_path):
     assert "attempt" in topics
     assert "counter" in topics
     assert "campaign_progress" in topics
+
+
+# --------------------------------------------------------------------------
+# Hardware trigger mode (one-shot)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_one_shot_campaign_programs_pgen_and_skips_usb_pulse(tmp_path):
+    """In one-shot mode, the orchestrator programs pgen delay/width per attempt
+    and does NOT fire the ChipSHOUTER over USB (hardware A0 trigger does it)."""
+    bits = make_ctx(tmp_path)
+    campaign = {
+        "id": "hw-1", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (0.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {
+            "delay_us": {"start": 1.0, "stop": 2.0, "step": 0.5},
+            "attempts_per_point": 1,
+        },
+        "trigger_mode": "one-shot",
+        "shouter_voltage": 250, "shouter_pulse_width_ns": 80, "shouter_mute": True,
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+    }
+    await bits["orch"].run_campaign(campaign)
+    # Trigger mode wired once.
+    assert bits["scaffold"].trigger_mode == "one-shot"
+    # Three delay values swept (1.0, 1.5, 2.0) → three pgen delay programmings.
+    assert bits["scaffold"].pulse_delays_us == [1.0, 1.5, 2.0]
+    assert bits["scaffold"].pulse_widths_ns == [80.0, 80.0, 80.0]
+    # No USB pulse in hardware mode.
+    assert bits["shouter"].pulses == 0
+
+
+@pytest.mark.asyncio
+async def test_hardware_trigger_wiring_failure_aborts_campaign(tmp_path):
+    """If set_trigger_mode raises, the campaign aborts (no silent degrade)."""
+    bits = make_ctx(tmp_path)
+    bits["scaffold"].trigger_mode_error = RuntimeError(
+        "hardware trigger wiring failed for 'one-shot': boom"
+    )
+    campaign = {
+        "id": "hw-fail", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (1.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 1},
+        "trigger_mode": "one-shot",
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+    }
+    result = await bits["orch"].run_campaign(campaign)
+    assert result["ok"] is False
+    assert "wiring failed" in result["reason"]
+    # No attempts ran; phase=failed broadcast; error broadcast.
+    assert bits["shover"].moves == []
+    topics = [b[0] for b in bits["broadcasts"]]
+    assert "error" in topics
+    progress = [b[1] for b in bits["broadcasts"] if b[0] == "campaign_progress"]
+    assert any(p.get("phase") == "failed" for p in progress)
 
 
 # --------------------------------------------------------------------------

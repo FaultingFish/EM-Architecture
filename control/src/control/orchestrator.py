@@ -248,6 +248,14 @@ class Orchestrator:
             raise RuntimeError("Orchestrator has no WorkerRegistry; wire it in deps.py")
         return self.workers.get(name)
 
+    async def _safe_disarm(self) -> None:
+        """Best-effort ChipSHOUTER disarm; never raises. Used on abort paths."""
+        if self.shouter.connected:
+            try:
+                await self._worker("chipshouter").call(self.shouter.disarm_safe)
+            except Exception:
+                pass
+
     # ---- one attempt -----------------------------------------------------
 
     async def perform_attempt(
@@ -284,12 +292,26 @@ class Orchestrator:
             except Exception as exc:
                 LOGGER.warning("shouter arm during attempt failed: %s", exc)
 
-        # Prep scaffold for the next verdict (rearm chain, clear edge latches).
+        # Prep scaffold for the next verdict (clear edge latches).
         if self.scaffold.connected:
             try:
                 await scaffold_worker.call(self.scaffold.arm_attempt)
             except Exception as exc:
                 LOGGER.debug("scaffold arm_attempt: %s", exc)
+
+        # In hardware-trigger modes, program the pulse generator for THIS
+        # attempt so the sweep can vary delay/width. The pgen then fires
+        # autonomously on the next D0 rising edge — no shouter.pulse() call.
+        if trigger_mode in ("one-shot", "free-run") and self.scaffold.connected:
+            delay_us = pulse_params.get("delay_us")
+            width_ns = pulse_params.get("pulse_width_ns")
+            delay_us = 1.0 if delay_us is None else float(delay_us)
+            width_ns = 80.0 if width_ns is None else float(width_ns)
+            try:
+                await scaffold_worker.call(self.scaffold.set_pulse_delay_us, delay_us)
+                await scaffold_worker.call(self.scaffold.set_pulse_width_ns, width_ns)
+            except Exception as exc:
+                LOGGER.warning("pgen delay/width set failed: %s", exc)
 
         await asyncio.sleep(0.02)
 
@@ -471,14 +493,57 @@ class Orchestrator:
         self.state.scan.completed = 0
         self.state.scan.total = total
 
-        # Set scaffold trigger mode for the campaign.
+        # --- Preparation phase (abort-on-failure with manual cleanup) ---
+
+        # 1. Auto-arm + configure ChipSHOUTER (USB; independent of the Scaffold
+        #    signal matrix). Non-fatal: a hardware-arm hiccup is logged but the
+        #    campaign proceeds (the software ARM gate still guards every pulse).
+        if auto_arm and self.shouter.connected:
+            try:
+                await shouter_worker.call(
+                    self.shouter.configure,
+                    voltage=int(c.get("shouter_voltage", 250)),
+                    pulse_width_ns=int(c.get("shouter_pulse_width_ns", 80)),
+                    pulse_repeat=1,
+                    pulse_deadtime_ms=10,
+                    arm_timeout_min=1,
+                    mute=bool(c.get("shouter_mute", True)),
+                )
+                await shouter_worker.call(self.shouter.arm, clear_faults=True)
+            except Exception as exc:
+                LOGGER.exception("Auto-arm failed")
+                self.broadcast("error", {
+                    "campaign_id": campaign_id,
+                    "detail": f"Auto-arm failed: {exc}",
+                })
+
+        # 2. Configure the A0 trigger path. For hardware modes this wires
+        #    d0 → pgen0 → a0. The user explicitly chose hardware triggering, so
+        #    a wiring failure ABORTS the campaign — no silent software degrade.
+        #    Runs after auto-arm and before host setup: set_trigger_mode calls
+        #    sig_disconnect_all, which must precede any host-script pin setup.
         if self.scaffold.connected:
             try:
                 await scaffold_worker.call(self.scaffold.set_trigger_mode, trigger_mode)
             except Exception as exc:
-                LOGGER.warning("scaffold set_trigger_mode(%s): %s", trigger_mode, exc)
+                LOGGER.error("Hardware trigger wiring failed: %s", exc)
+                self.broadcast("error", {
+                    "campaign_id": campaign_id,
+                    "detail": f"hardware trigger wiring failed: {exc}",
+                })
+                self.broadcast("campaign_progress", {
+                    "campaign_id": campaign_id,
+                    "phase": "failed",
+                    "completed": 0,
+                    "total": total,
+                    "current_xyz": None,
+                    "current_sweep": None,
+                })
+                await self._safe_disarm()
+                self.state.scan.active = False
+                return {"ok": False, "reason": f"trigger wiring failed: {exc}"}
 
-        # Host script setup. Failure here aborts the whole campaign.
+        # 3. Host script setup. Failure here aborts the whole campaign.
         try:
             host_mod.setup(host_ctx)
         except Exception as exc:
@@ -497,14 +562,11 @@ class Orchestrator:
             })
             # Defensive: ensure shouter is safely disarmed even if setup
             # ran far enough to leave it armed.
-            if self.shouter.connected:
-                try:
-                    await shouter_worker.call(self.shouter.disarm_safe)
-                except Exception:
-                    pass
+            await self._safe_disarm()
             self.state.scan.active = False
             return {"ok": False, "reason": f"setup failed: {exc}"}
 
+        # --- Run phase (cleanup guaranteed via finally) ---
         self.broadcast("campaign_progress", {
             "campaign_id": campaign_id,
             "phase": "started",
@@ -517,26 +579,6 @@ class Orchestrator:
         completed = 0
         host_script_errors = 0
         try:
-            # Auto-arm + configure ChipSHOUTER once at campaign start.
-            if auto_arm and self.shouter.connected:
-                try:
-                    await shouter_worker.call(
-                        self.shouter.configure,
-                        voltage=int(c.get("shouter_voltage", 250)),
-                        pulse_width_ns=int(c.get("shouter_pulse_width_ns", 80)),
-                        pulse_repeat=1,
-                        pulse_deadtime_ms=10,
-                        arm_timeout_min=1,
-                        mute=bool(c.get("shouter_mute", True)),
-                    )
-                    await shouter_worker.call(self.shouter.arm, clear_faults=True)
-                except Exception as exc:
-                    LOGGER.exception("Auto-arm failed")
-                    self.broadcast("error", {
-                        "campaign_id": campaign_id,
-                        "detail": f"Auto-arm failed: {exc}",
-                    })
-
             for (x, y, z, xi, yi, zi) in grid_pts:
                 if self.stop_flag.is_set():
                     LOGGER.info("Campaign %s stop_flag set; breaking grid loop", campaign_id)

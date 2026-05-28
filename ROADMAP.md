@@ -31,6 +31,7 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 - [ ] **GlitchTarget range** — `pc_end` field so a single target spans an instruction range; campaign sweeps delay across the range. **(develop protocol + view picker)**
   - [x] develop: protocol fields + storage round-trip
   - [ ] view: range-select in AssemblyView
+- [x] **Hardware-triggered pulse via Scaffold pgen** — D0 rising edge → pgen0 (programmable delay) → A0 ChipSHOUTER trigger, all in hardware (zero USB jitter). `trigger_mode="one-shot"` wires `d0 → pgen0.start`, `pgen0.out → a0`; sweep delay/width set per attempt via `pgen0.delay`/`pgen0.width`. **(control)**
 - [ ] **Stop conditions** — "stop after N glitches", "stop on first crash", "stop after X minutes". **(control orchestrator + view UI)**
 - [ ] **Heatmap drill-down** — click a hot cell → see the attempts that produced glitches, with delay/voltage/pulse-width/target-PC for each. **(view, reads existing /runs)**
 - [ ] **Heatmap parameter histogram** — `(delay_us, pulse_width_ns)` joint distribution for cells with ≥N glitches; finds sweet spots. **(view)**
