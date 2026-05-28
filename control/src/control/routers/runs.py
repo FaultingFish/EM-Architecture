@@ -53,5 +53,11 @@ async def replay(run_id: str, ctx: AppContext = Depends(get_ctx)) -> dict:
     """Re-execute the exact glitch attempt identified by run_id."""
     ctx.arm_gate.require_armed()
     ctx.rate_limiter.acquire()
-    result = await ctx.orchestrator.replay(run_id)
+    try:
+        result = await ctx.orchestrator.replay(run_id)
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=500, detail=msg)
     return result

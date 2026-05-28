@@ -1,33 +1,387 @@
-"""Tests for the campaign engine.
-
-Skeleton only — flesh out once the orchestrator is ported. Use fake
-adapters (in-memory state, no hardware) to exercise classification,
-sweep math, and stop-flag responsiveness.
-"""
+"""Tests for the campaign engine — uses fake adapters, no hardware."""
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from typing import Any, Dict, List
+
 import pytest
 
+from control.logbook import Logbook
+from control.orchestrator import (
+    HostScriptContext,
+    Orchestrator,
+    _default_host_script,
+    _grid_points,
+    _sweep_range_values,
+)
+from control.safety import ArmGate, RateLimiter, StopFlag
+from control.state import AppState, DeviceStatus
+from control.workers import WorkerRegistry
 
-@pytest.mark.skip(reason="orchestrator not yet ported from old setup")
-def test_perform_attempt_classifies_glitch():
+
+# --------------------------------------------------------------------------
+# Fake adapters
+# --------------------------------------------------------------------------
+
+class FakeShover:
+    def __init__(self) -> None:
+        self.connected = True
+        self.moves: List[tuple] = []
+
+    def move_absolute_logical(self, x: float, y: float, z: float) -> None:
+        self.moves.append((x, y, z))
+
+    def get_position(self) -> tuple:
+        return (0.0, 0.0, 0.0)
+
+
+class FakeShouter:
+    def __init__(self, connected: bool = True) -> None:
+        self.connected = connected
+        self.pulses = 0
+        self.state_value = "ready"
+        self.faults: List[Any] = []
+        self.armed = False
+
+    def arm(self, clear_faults: bool = False) -> None:
+        self.armed = True
+
+    def disarm_safe(self) -> None:
+        self.armed = False
+
+    def configure(self, **kwargs) -> None:
+        pass
+
+    def pulse(self) -> None:
+        self.pulses += 1
+
+    def get_state(self) -> str:
+        return self.state_value
+
+    def get_fault_active(self) -> List[Any]:
+        return list(self.faults)
+
+
+class FakeScaffold:
+    def __init__(self) -> None:
+        self.connected = True
+        self.trigger_mode = "software"
+        self.next_verdict: Dict[str, Any] = {
+            "fault": False, "heartbeat_alive": True, "campaign_complete": False,
+        }
+        self.power_cycles = 0
+
+    def set_trigger_mode(self, mode: str) -> None:
+        self.trigger_mode = mode
+
+    def arm_attempt(self) -> None:
+        pass
+
+    def wait_verdict(self, timeout_s: float) -> Dict[str, Any]:
+        return dict(self.next_verdict)
+
+    def dut_power_cycle(self) -> None:
+        self.power_cycles += 1
+
+
+def make_ctx(tmp_path) -> Dict[str, Any]:
+    """Wire up a fake orchestrator + dependencies."""
+    state = AppState(
+        devices={
+            "chipshover": DeviceStatus(name="chipshover", connected=True),
+            "chipshouter": DeviceStatus(name="chipshouter", connected=True),
+            "scaffold": DeviceStatus(name="scaffold", connected=True),
+            "xds110": DeviceStatus(name="xds110"),
+        },
+    )
+    arm_gate = ArmGate(auto_disarm_seconds=600)
+    arm_gate.arm()
+    stop_flag = StopFlag()
+    rate_limiter = RateLimiter("test", max_per_sec=0)  # 0 = unlimited
+    logbook = Logbook(tmp_path)
+    workers = WorkerRegistry()
+    shover = FakeShover()
+    shouter = FakeShouter()
+    scaffold = FakeScaffold()
+
+    broadcasts: List[tuple] = []
+
+    def broadcast(topic: str, payload: Dict[str, Any]) -> None:
+        broadcasts.append((topic, payload))
+
+    orch = Orchestrator(
+        state=state,
+        arm_gate=arm_gate,
+        stop_flag=stop_flag,
+        rate_limiter=rate_limiter,
+        logbook=logbook,
+        shover=shover,
+        shouter=shouter,
+        scaffold=scaffold,
+        broadcast=broadcast,
+        workers=workers,
+    )
+    return {
+        "orch": orch, "state": state, "stop_flag": stop_flag,
+        "shover": shover, "shouter": shouter, "scaffold": scaffold,
+        "broadcasts": broadcasts, "logbook": logbook,
+    }
+
+
+# --------------------------------------------------------------------------
+# Pure-logic tests (no event loop needed)
+# --------------------------------------------------------------------------
+
+def test_sweep_range_values_none_yields_single_none():
+    assert _sweep_range_values(None) == [None]
+
+
+def test_sweep_range_values_inclusive_stepped():
+    rng = {"start": 1.0, "stop": 3.0, "step": 1.0}
+    assert _sweep_range_values(rng) == [1.0, 2.0, 3.0]
+
+
+def test_grid_points_serpentine_y():
+    """Y axis alternates direction every Z plane."""
+    grid = {
+        "origin": (0.0, 0.0), "top_right": (2.0, 1.0),
+        "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+    }
+    pts = list(_grid_points(grid))
+    # 3 x_steps * 2 y_steps * 1 z_step = 6 points
+    assert len(pts) == 6
+    # First y row (yi=0): x forward 0,1,2
+    assert [(p[0], p[1]) for p in pts[:3]] == [(0, 0), (1, 0), (2, 0)]
+    # Second y row (yi=1): x reverse 2,1,0
+    assert [(p[0], p[1]) for p in pts[3:]] == [(2, 1), (1, 1), (0, 1)]
+
+
+def test_grid_points_origin_offset():
+    """Grid honors non-zero origin."""
+    grid = {
+        "origin": (5.0, 10.0), "top_right": (6.0, 10.0),
+        "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+    }
+    pts = list(_grid_points(grid))
+    assert (5.0, 10.0) in [(p[0], p[1]) for p in pts]
+    assert (6.0, 10.0) in [(p[0], p[1]) for p in pts]
+
+
+# --------------------------------------------------------------------------
+# perform_attempt classification
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_perform_attempt_classifies_glitch(tmp_path):
     """When verdict.fault is True, outcome should be 'glitch'."""
-    raise NotImplementedError
+    bits = make_ctx(tmp_path)
+    bits["scaffold"].next_verdict = {
+        "fault": True, "heartbeat_alive": True, "campaign_complete": False,
+    }
+    host_ctx = HostScriptContext(
+        scaffold=bits["scaffold"], shouter=bits["shouter"], params={},
+        logbook=bits["logbook"], state=bits["state"],
+    )
+    result = await bits["orch"].perform_attempt(
+        verdict_timeout_s=0.1, pulse_params={},
+        host_script=_default_host_script(bits["scaffold"]),
+        host_ctx=host_ctx,
+    )
+    assert result["outcome"] == "glitch"
+    assert bits["state"].counters.glitches == 1
 
 
-@pytest.mark.skip(reason="orchestrator not yet ported from old setup")
-def test_perform_attempt_classifies_hang():
-    """When heartbeat_alive is False, outcome should be 'hang'."""
-    raise NotImplementedError
+@pytest.mark.asyncio
+async def test_perform_attempt_classifies_hang(tmp_path):
+    """When heartbeat_alive is False (and no fault), outcome should be 'hang'."""
+    bits = make_ctx(tmp_path)
+    bits["scaffold"].next_verdict = {
+        "fault": False, "heartbeat_alive": False, "campaign_complete": False,
+    }
+    host_ctx = HostScriptContext(
+        scaffold=bits["scaffold"], shouter=bits["shouter"], params={},
+        logbook=bits["logbook"], state=bits["state"],
+    )
+    result = await bits["orch"].perform_attempt(
+        verdict_timeout_s=0.1, pulse_params={},
+        host_script=_default_host_script(bits["scaffold"]),
+        host_ctx=host_ctx,
+    )
+    assert result["outcome"] == "hang"
+    # Hang should trigger DUT power cycle.
+    assert bits["scaffold"].power_cycles == 1
 
 
-@pytest.mark.skip(reason="orchestrator not yet ported from old setup")
-def test_run_campaign_serpentine_y():
-    """Y axis should alternate direction between Z planes to avoid backlash."""
-    raise NotImplementedError
+@pytest.mark.asyncio
+async def test_perform_attempt_classifies_nothing(tmp_path):
+    bits = make_ctx(tmp_path)
+    bits["scaffold"].next_verdict = {
+        "fault": False, "heartbeat_alive": True, "campaign_complete": False,
+    }
+    host_ctx = HostScriptContext(
+        scaffold=bits["scaffold"], shouter=bits["shouter"], params={},
+        logbook=bits["logbook"], state=bits["state"],
+    )
+    result = await bits["orch"].perform_attempt(
+        verdict_timeout_s=0.1, pulse_params={},
+        host_script=_default_host_script(bits["scaffold"]),
+        host_ctx=host_ctx,
+    )
+    assert result["outcome"] == "nothing"
 
 
-@pytest.mark.skip(reason="orchestrator not yet ported from old setup")
-def test_run_campaign_stops_promptly_on_stop_flag():
-    raise NotImplementedError
+@pytest.mark.asyncio
+async def test_perform_attempt_classifies_crash_on_shouter_fault(tmp_path):
+    """shouter state == 'fault' should classify as crash when no fault/hang."""
+    bits = make_ctx(tmp_path)
+    bits["scaffold"].next_verdict = {
+        "fault": False, "heartbeat_alive": True, "campaign_complete": False,
+    }
+    bits["shouter"].state_value = "fault"
+    host_ctx = HostScriptContext(
+        scaffold=bits["scaffold"], shouter=bits["shouter"], params={},
+        logbook=bits["logbook"], state=bits["state"],
+    )
+    result = await bits["orch"].perform_attempt(
+        verdict_timeout_s=0.1, pulse_params={},
+        host_script=_default_host_script(bits["scaffold"]),
+        host_ctx=host_ctx,
+    )
+    assert result["outcome"] == "crash"
+
+
+# --------------------------------------------------------------------------
+# Campaign sweep tests
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_campaign_serpentine_y(tmp_path):
+    """Each row of Y reverses X direction."""
+    bits = make_ctx(tmp_path)
+    campaign = {
+        "id": "test-1", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (2.0, 1.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 1},
+        "trigger_mode": "software",
+        "shouter_voltage": 250, "shouter_pulse_width_ns": 80, "shouter_mute": True,
+        "shouter_auto_arm": False,  # skip configure/arm to keep test simple
+        "verdict_timeout_ms": 50,
+    }
+    await bits["orch"].run_campaign(campaign)
+    # 2x3 grid (3 x_steps × 2 y_steps × 1 z_step)
+    assert len(bits["shover"].moves) == 6
+    # Row 0 (yi=0): x increases
+    row0 = bits["shover"].moves[:3]
+    assert [m[0] for m in row0] == [0.0, 1.0, 2.0]
+    # Row 1 (yi=1): x decreases
+    row1 = bits["shover"].moves[3:]
+    assert [m[0] for m in row1] == [2.0, 1.0, 0.0]
+
+
+@pytest.mark.asyncio
+async def test_run_campaign_stops_promptly_on_stop_flag(tmp_path):
+    """StopFlag set mid-campaign causes the loop to exit within one attempt."""
+    bits = make_ctx(tmp_path)
+
+    # Schedule a stop after the first broadcast.
+    def _stop_after_first():
+        # Trip flag once we've recorded at least one attempt.
+        deadline = 2.0
+        start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start < deadline:
+            if bits["state"].counters.attempts >= 1:
+                bits["stop_flag"].set()
+                return
+            # spin briefly
+
+    campaign = {
+        "id": "test-2", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (10.0, 0.0),  # 11 grid points
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 5},  # 55 total attempts
+        "trigger_mode": "software",
+        "shouter_voltage": 250, "shouter_pulse_width_ns": 80, "shouter_mute": True,
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+    }
+
+    async def stopper():
+        # Wait until first attempt completes, then set stop.
+        for _ in range(200):
+            if bits["state"].counters.attempts >= 1:
+                bits["stop_flag"].set()
+                return
+            await asyncio.sleep(0.005)
+
+    stop_task = asyncio.create_task(stopper())
+    result = await bits["orch"].run_campaign(campaign)
+    await stop_task
+
+    # Should have stopped well before 55 attempts.
+    assert result["completed"] < 55
+    # Final campaign_progress should report phase=stopped.
+    progress = [b for b in bits["broadcasts"] if b[0] == "campaign_progress"]
+    assert any(p[1].get("phase") == "stopped" for p in progress)
+
+
+@pytest.mark.asyncio
+async def test_run_campaign_broadcasts_position_and_attempt(tmp_path):
+    bits = make_ctx(tmp_path)
+    campaign = {
+        "id": "test-3", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (0.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 1},
+        "trigger_mode": "software",
+        "shouter_voltage": 250, "shouter_pulse_width_ns": 80, "shouter_mute": True,
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+    }
+    await bits["orch"].run_campaign(campaign)
+    topics = [b[0] for b in bits["broadcasts"]]
+    assert "position" in topics
+    assert "attempt" in topics
+    assert "counter" in topics
+    assert "campaign_progress" in topics
+
+
+# --------------------------------------------------------------------------
+# Replay
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_replay_jogs_and_refires(tmp_path):
+    bits = make_ctx(tmp_path)
+    # Log an attempt directly via the logbook.
+    original = bits["logbook"].append({
+        "id": "abc", "outcome": "nothing", "x": 2.5, "y": 1.5, "z": 0.0,
+        "trigger_mode": "software",
+        "glitch_delay_us": 1.0, "pulse_width_ns": 80, "shouter_voltage": 250,
+        "verdict": {"fault": False, "heartbeat_alive": True, "campaign_complete": False},
+    })
+
+    bits["scaffold"].next_verdict = {
+        "fault": True, "heartbeat_alive": True, "campaign_complete": False,
+    }
+    new_entry = await bits["orch"].replay("abc")
+    assert new_entry["outcome"] == "glitch"  # we set fault=True for replay
+    # Position was jogged to original (x, y, z).
+    assert bits["shover"].moves == [(2.5, 1.5, 0.0)]
+    # New entry is a separate row (different id).
+    assert new_entry["id"] != "abc"
+
+
+@pytest.mark.asyncio
+async def test_replay_unknown_run_id(tmp_path):
+    bits = make_ctx(tmp_path)
+    with pytest.raises(RuntimeError, match="not found"):
+        await bits["orch"].replay("nonexistent")

@@ -20,7 +20,6 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
 
 def _count_sweep_points(sweep) -> int:
-    """Count the number of parameter combinations in a sweep."""
     count = 1
     for dim in (sweep.delay_us, sweep.pulse_width_ns, sweep.voltage_v):
         if dim is not None and dim.step > 0:
@@ -33,7 +32,9 @@ def _count_sweep_points(sweep) -> int:
 def _count_grid_points(grid) -> int:
     x_steps = int(round((grid.top_right[0] - grid.origin[0]) / grid.step_size_mm)) + 1
     y_steps = int(round((grid.top_right[1] - grid.origin[1]) / grid.step_size_mm)) + 1
-    z_steps = int(round((grid.z_max_mm - grid.z_min_mm) / grid.z_step_mm)) + 1
+    z_step = grid.z_step_mm if grid.z_step_mm > 0 else 1
+    z_range = grid.z_max_mm - grid.z_min_mm
+    z_steps = int(round(z_range / z_step)) + 1 if z_range > 0 else 1
     return max(1, x_steps) * max(1, y_steps) * max(1, z_steps)
 
 
@@ -56,29 +57,14 @@ async def start(campaign: Campaign, ctx: AppContext = Depends(get_ctx)) -> Campa
     )
     ctx.campaigns[campaign.id] = status
 
-    ctx.broadcast("campaign_progress", {
-        "campaign_id": campaign.id,
-        "completed": 0,
-        "total": total,
-        "current_xyz": None,
-    })
-
     async def _run() -> None:
         try:
-            await ctx.orchestrator.run_campaign(campaign.model_dump())
-        except NotImplementedError:
-            LOGGER.warning("Campaign %s: orchestrator not yet implemented", campaign.id)
+            await ctx.orchestrator.run_campaign(campaign, status)
         except Exception:
             LOGGER.exception("Campaign %s failed", campaign.id)
         finally:
             status.active = False
             status.finished_at = datetime.now(timezone.utc)
-            ctx.broadcast("campaign_progress", {
-                "campaign_id": campaign.id,
-                "completed": status.completed_attempts,
-                "total": status.total_attempts,
-                "current_xyz": None,
-            })
 
     asyncio.create_task(_run())
     LOGGER.info("Campaign %s started (%d total attempts)", campaign.id, total)
@@ -102,12 +88,5 @@ async def stop(campaign_id: str, ctx: AppContext = Depends(get_ctx)) -> dict:
     if campaign_id not in ctx.campaigns:
         raise HTTPException(status_code=404, detail=f"Campaign {campaign_id} not found")
     ctx.stop_flag.set()
-    ctx.campaigns[campaign_id].active = False
-    ctx.broadcast("campaign_progress", {
-        "campaign_id": campaign_id,
-        "completed": ctx.campaigns[campaign_id].completed_attempts,
-        "total": ctx.campaigns[campaign_id].total_attempts,
-        "current_xyz": None,
-    })
-    LOGGER.info("Campaign %s stopped", campaign_id)
+    LOGGER.info("Campaign %s stop requested", campaign_id)
     return {"ok": True, "campaign_id": campaign_id}

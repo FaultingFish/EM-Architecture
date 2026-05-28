@@ -1,33 +1,170 @@
 """Campaign engine: per-attempt sequencing + multi-dimensional sweep.
 
-Carry-forward of old-em-setup/glitchweb/backend/app/orchestrator.py's
-perform_attempt() + run_scan(). Extended to sweep delay × pulse_width ×
-voltage on top of the XYZ grid, and to support replay(run_id).
+Ported from old-em-setup/glitchweb/backend/app/orchestrator.py and extended:
 
-The build-out session that fills this in should:
-1. Lift `perform_attempt` from the old file verbatim, replacing direct
-   device imports with the new control.adapters.*.
-2. Replace the triple-nested XYZ loop with an iterator over
-   (xyz_grid × sweep_dimensions), still serpentine on Y.
-3. Add `replay(run_id)`: fetch the AttemptResult from logbook,
-   jog to its position, re-fire its pulse parameters.
+- XYZ grid sweep is augmented by delay_us × pulse_width_ns × voltage_v.
+- Each campaign loads the per-project ``host/run.py`` script (or a default
+  fallback) and calls ``setup(ctx)``, ``attempt(ctx)``, ``teardown(ctx)``.
+- StopFlag is checked between every attempt for prompt cancellation.
+- WS topics: position, attempt, counter, campaign_progress, error.
+- ``replay(run_id)`` re-jogs and re-fires any historical attempt.
 
-Reference: old orchestrator at
-old-em-setup/glitchweb/backend/app/orchestrator.py
+Sweep loop nesting (outermost → innermost):
+    z → y (serpentine) → x → delay_us → pulse_width_ns → voltage_v
+    → attempts_per_point
+
+Host-script lookup: ``~/emfi-projects/{project_id}/host/run.py``
+(Control and Develop are co-located on the lab box so a direct
+filesystem read is simpler than HTTP).
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
-from typing import Any, Callable, Dict, Optional
+import time
+import traceback
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from control.logbook import Logbook
-from control.safety import ArmGate, RateLimiter, StopFlag
+from control.safety import ArmGate, Disarmed, RateLimited, RateLimiter, StopFlag
 from control.state import AppState
+from control.workers import WorkerRegistry
 
 LOGGER = logging.getLogger(__name__)
 
+
+# --------------------------------------------------------------------------
+# Host script support
+# --------------------------------------------------------------------------
+
+class HostScriptContext:
+    """Small namespace passed to host script setup/attempt/teardown."""
+
+    def __init__(
+        self,
+        scaffold: Any,
+        shouter: Any,
+        params: Dict[str, Any],
+        logbook: Logbook,
+        state: AppState,
+    ) -> None:
+        self.scaffold = scaffold
+        self.target = scaffold  # legacy naming compat
+        self.shouter = shouter
+        self.params = params
+        self.logbook = logbook
+        self.state = state
+
+
+def _default_host_script(scaffold: Any) -> Any:
+    """Return a stand-in module with setup/attempt/teardown that does the
+    standard D0/D1/D2/D3 verdict read via the Scaffold adapter."""
+
+    class _Default:
+        @staticmethod
+        def setup(ctx: HostScriptContext) -> None:
+            return None
+
+        @staticmethod
+        def attempt(ctx: HostScriptContext) -> Dict[str, Any]:
+            timeout_s = float(ctx.params.get("verdict_timeout_s", 0.5))
+            return ctx.scaffold.wait_verdict(timeout_s)
+
+        @staticmethod
+        def teardown(ctx: HostScriptContext) -> None:
+            return None
+
+    return _Default()
+
+
+def _load_host_script(project_id: str) -> Tuple[Any, Optional[Path]]:
+    """Load ~/emfi-projects/<project_id>/host/run.py if present.
+
+    Returns (module-or-default, path). On any error, returns the default
+    so the campaign can still run with built-in verdict logic.
+    """
+    path = Path.home() / "emfi-projects" / project_id / "host" / "run.py"
+    if not path.exists():
+        LOGGER.info("No host/run.py at %s; using built-in default", path)
+        return None, None
+    try:
+        spec = importlib.util.spec_from_file_location(f"host_run_{project_id}", path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not build spec for {path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        for fn in ("setup", "attempt", "teardown"):
+            if not hasattr(mod, fn):
+                LOGGER.warning(
+                    "Host script %s missing %s(); falling back to default", path, fn
+                )
+                return None, path
+        LOGGER.info("Loaded host script from %s", path)
+        return mod, path
+    except Exception:
+        LOGGER.exception("Failed to load host script at %s; using default", path)
+        return None, path
+
+
+# --------------------------------------------------------------------------
+# Sweep iteration
+# --------------------------------------------------------------------------
+
+def _sweep_range_values(rng: Any) -> List[float]:
+    """Yield inclusive [start, stop] stepped by ``step``. None → [None]."""
+    if rng is None:
+        return [None]  # type: ignore[list-item]
+    start = float(rng["start"]) if isinstance(rng, dict) else float(rng.start)
+    stop = float(rng["stop"]) if isinstance(rng, dict) else float(rng.stop)
+    step = float(rng["step"]) if isinstance(rng, dict) else float(rng.step)
+    if step <= 0:
+        return [start]
+    n = int(round((stop - start) / step)) + 1
+    return [start + i * step for i in range(max(1, n))]
+
+
+def _grid_points(grid: Any) -> Iterator[Tuple[float, float, float, int, int, int]]:
+    """Yield (x, y, z, x_idx, y_idx, z_idx) in z → y (serpentine) → x order."""
+    if isinstance(grid, dict):
+        origin = grid["origin"]
+        top_right = grid["top_right"]
+        step = float(grid["step_size_mm"])
+        z_min = float(grid["z_min_mm"])
+        z_max = float(grid["z_max_mm"])
+        z_step = float(grid["z_step_mm"])
+    else:
+        origin = grid.origin
+        top_right = grid.top_right
+        step = float(grid.step_size_mm)
+        z_min = float(grid.z_min_mm)
+        z_max = float(grid.z_max_mm)
+        z_step = float(grid.z_step_mm)
+
+    ox, oy = float(origin[0]), float(origin[1])
+    tx, ty = float(top_right[0]), float(top_right[1])
+
+    x_steps = max(1, int(round((tx - ox) / step)) + 1) if step > 0 else 1
+    y_steps = max(1, int(round((ty - oy) / step)) + 1) if step > 0 else 1
+    z_steps = max(1, int(round((z_max - z_min) / z_step)) + 1) if z_step > 0 else 1
+
+    for zi in range(z_steps):
+        z = z_min + zi * z_step
+        for yi in range(y_steps):
+            y = oy + yi * step
+            x_range = range(x_steps) if yi % 2 == 0 else range(x_steps - 1, -1, -1)
+            for xi in x_range:
+                x = ox + xi * step
+                yield (x, y, z, xi, yi, zi)
+
+
+# --------------------------------------------------------------------------
+# Orchestrator
+# --------------------------------------------------------------------------
 
 class Orchestrator:
     def __init__(
@@ -37,11 +174,12 @@ class Orchestrator:
         stop_flag: StopFlag,
         rate_limiter: RateLimiter,
         logbook: Logbook,
-        shover: Any,        # adapters.chipshover.ChipShoverAdapter
-        shouter: Any,       # adapters.chipshouter.ChipShouterAdapter
-        scaffold: Any,      # adapters.scaffold.ScaffoldAdapter
-        broadcast: Callable[[Dict[str, Any]], None],
-    ):
+        shover: Any,
+        shouter: Any,
+        scaffold: Any,
+        broadcast: Callable[[str, Dict[str, Any]], None],
+        workers: Optional[WorkerRegistry] = None,
+    ) -> None:
         self.state = state
         self.arm_gate = arm_gate
         self.stop_flag = stop_flag
@@ -51,45 +189,485 @@ class Orchestrator:
         self.shouter = shouter
         self.scaffold = scaffold
         self.broadcast = broadcast
+        self.workers = workers
         self._task: Optional[asyncio.Task] = None
         self._task_lock = asyncio.Lock()
+
+    def _worker(self, name: str) -> Any:
+        if self.workers is None:
+            raise RuntimeError("Orchestrator has no WorkerRegistry; wire it in deps.py")
+        return self.workers.get(name)
+
+    # ---- one attempt -----------------------------------------------------
 
     async def perform_attempt(
         self,
         verdict_timeout_s: float,
         pulse_params: Dict[str, Any],
+        host_script: Any,
+        host_ctx: HostScriptContext,
+        campaign_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        project_version: Optional[str] = None,
+        build_sha: Optional[str] = None,
+        target_pc: Optional[int] = None,
+        trigger_mode: str = "software",
         shouter_auto_arm: bool = True,
     ) -> Dict[str, Any]:
         """Single glitch attempt at the current position.
 
-        TODO: lift implementation from old orchestrator perform_attempt().
-        Lines 49-137 in old-em-setup/glitchweb/backend/app/orchestrator.py.
+        Carry-forward from old orchestrator.perform_attempt (lines 49-137)
+        with host_script integration replacing the inline verdict logic.
         """
-        raise NotImplementedError(
-            "perform_attempt: port from old-em-setup/glitchweb/backend/app/orchestrator.py:49"
-        )
+        self.arm_gate.require_armed()
+        self.rate_limiter.acquire()
+
+        t0 = time.monotonic()
+
+        shouter_worker = self._worker("chipshouter")
+        scaffold_worker = self._worker("scaffold")
+
+        # In auto-arm mode, ensure shouter is armed (idempotent).
+        if shouter_auto_arm and self.shouter.connected:
+            try:
+                await shouter_worker.call(self.shouter.arm, clear_faults=False)
+            except Exception as exc:
+                LOGGER.warning("shouter arm during attempt failed: %s", exc)
+
+        # Prep scaffold for the next verdict (rearm chain, clear edge latches).
+        if self.scaffold.connected:
+            try:
+                await scaffold_worker.call(self.scaffold.arm_attempt)
+            except Exception as exc:
+                LOGGER.debug("scaffold arm_attempt: %s", exc)
+
+        await asyncio.sleep(0.02)
+
+        # Fire the pulse (software trigger) or rely on hardware A0 trigger.
+        if trigger_mode == "software":
+            if not self.shouter.connected:
+                raise RuntimeError(
+                    "software trigger mode needs ChipSHOUTER connected; "
+                    "switch trigger_mode to one-shot or free-run for hardware A0"
+                )
+            await shouter_worker.call(self.shouter.pulse)
+        # one-shot / free-run: A0 fires from Scaffold; no USB call here.
+
+        # Host script reads the verdict (default: scaffold.wait_verdict).
+        host_ctx.params = {
+            **host_ctx.params,
+            "verdict_timeout_s": verdict_timeout_s,
+            "trigger_mode": trigger_mode,
+            **pulse_params,
+        }
+        verdict: Dict[str, Any] = {
+            "fault": False, "heartbeat_alive": False, "campaign_complete": False,
+        }
+        attempt_error: Optional[str] = None
+        try:
+            mod = host_script
+            if hasattr(mod, "attempt"):
+                # Run host_script.attempt on the scaffold worker thread to
+                # serialize with other Scaffold IO.
+                verdict = await scaffold_worker.call(mod.attempt, host_ctx) or verdict
+        except Exception as exc:
+            attempt_error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+            LOGGER.exception("Host script attempt() failed")
+
+        # Read shouter state for crash classification (tolerant of unplugged).
+        state_str = ""
+        active_faults: List[Any] = []
+        if self.shouter.connected:
+            try:
+                state_str = await shouter_worker.call(self.shouter.get_state)
+                active_faults = await shouter_worker.call(self.shouter.get_fault_active)
+            except Exception as exc:
+                LOGGER.debug("could not read shouter state: %s", exc)
+
+        crashed = (str(state_str).lower() == "fault") or bool(active_faults)
+        fault_detected = bool(verdict.get("fault"))
+        hung = not bool(verdict.get("heartbeat_alive"))
+
+        if attempt_error is not None:
+            outcome = "crash"
+        elif fault_detected:
+            outcome = "glitch"
+        elif hung:
+            outcome = "hang"
+        elif crashed:
+            outcome = "crash"
+        else:
+            outcome = "nothing"
+
+        if verdict.get("campaign_complete"):
+            self.state.counters.campaigns += 1
+
+        self.state.counters.record(outcome)
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+        entry = {
+            "id": str(uuid.uuid4()),
+            "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "campaign_id": campaign_id,
+            "x": self.state.position_logical[0],
+            "y": self.state.position_logical[1],
+            "z": self.state.position_logical[2],
+            "machine_x": self.state.position_machine[0],
+            "machine_y": self.state.position_machine[1],
+            "machine_z": self.state.position_machine[2],
+            "trigger_mode": trigger_mode,
+            "glitch_delay_us": pulse_params.get("delay_us") or pulse_params.get("glitch_delay_us"),
+            "pulse_width_ns": pulse_params.get("pulse_width_ns"),
+            "shouter_voltage": pulse_params.get("voltage_v") or pulse_params.get("shouter_voltage"),
+            "shouter_pulse_width_ns": pulse_params.get("shouter_pulse_width_ns"),
+            "outcome": outcome,
+            "verdict": verdict,
+            "shouter_state": str(state_str) if state_str else None,
+            "elapsed_ms": elapsed_ms,
+            "project_id": project_id,
+            "project_version": project_version,
+            "build_sha": build_sha,
+            "target_pc": target_pc,
+        }
+        if attempt_error:
+            entry["error"] = attempt_error
+        stored = self.logbook.append(entry)
+
+        # Broadcast attempt + counter snapshot.
+        self.broadcast("attempt", stored)
+        self.broadcast("counter", {
+            "attempts": self.state.counters.attempts,
+            "glitches": self.state.counters.glitches,
+            "hangs": self.state.counters.hangs,
+            "crashes": self.state.counters.crashes,
+            "nothings": self.state.counters.nothings,
+            "campaigns": self.state.counters.campaigns,
+        })
+
+        if outcome == "hang" and self.scaffold.connected:
+            try:
+                await scaffold_worker.call(self.scaffold.dut_power_cycle)
+            except Exception as exc:
+                LOGGER.warning("DUT power cycle on hang failed: %s", exc)
+
+        return {"outcome": outcome, "entry": stored}
+
+    # ---- campaign --------------------------------------------------------
 
     async def run_campaign(
         self,
-        params: Dict[str, Any],
+        campaign: Any,
+        status: Any = None,
     ) -> Dict[str, Any]:
         """Run a full campaign.
 
-        Sweep dimensions (in nesting order, outermost first):
-          z → y → x (serpentine) → delay_us → pulse_width_ns → voltage_v
-            → attempts_per_point
-
-        TODO: lift run_scan from old orchestrator, extend with sweep dims.
-        Lines 141-222 in old-em-setup/glitchweb/backend/app/orchestrator.py.
+        ``campaign`` is the Campaign Pydantic model; ``status`` is the
+        CampaignStatus to update in-place (optional).
         """
-        raise NotImplementedError(
-            "run_campaign: extend from old-em-setup orchestrator.run_scan"
+        # Accept either Pydantic model or dict.
+        if isinstance(campaign, dict):
+            c = campaign
+        else:
+            c = campaign.model_dump()
+
+        campaign_id = c.get("id") or str(uuid.uuid4())
+        project_id = c["project_id"]
+        project_version = c.get("project_version")
+        build_sha = c.get("build_sha")
+        target_pc = c.get("target_pc")
+        trigger_mode = c.get("trigger_mode", "software")
+        auto_arm = bool(c.get("shouter_auto_arm", True))
+        verdict_timeout_s = float(c.get("verdict_timeout_ms", 500)) / 1000.0
+
+        grid = c["grid"]
+        sweep = c["sweep"]
+
+        delays = _sweep_range_values(sweep.get("delay_us"))
+        widths = _sweep_range_values(sweep.get("pulse_width_ns"))
+        voltages = _sweep_range_values(sweep.get("voltage_v"))
+        attempts_per_point = int(sweep.get("attempts_per_point", 1))
+
+        grid_pts = list(_grid_points(grid))
+        sweep_combinations = len(delays) * len(widths) * len(voltages)
+        total = len(grid_pts) * sweep_combinations * attempts_per_point
+        LOGGER.info(
+            "Campaign %s starting: %d grid pts × %d sweep × %d attempts = %d total",
+            campaign_id, len(grid_pts), sweep_combinations, attempts_per_point, total,
         )
 
-    async def replay(self, run_id: str) -> Dict[str, Any]:
-        """Re-execute the attempt identified by run_id.
+        if status is not None:
+            status.total_attempts = total
 
-        Fetch the AttemptResult from the logbook, jog to its (x, y, z),
-        and fire the same pulse parameters.
+        host_mod, host_path = _load_host_script(project_id)
+        if host_mod is None:
+            host_mod = _default_host_script(self.scaffold)
+            LOGGER.info("Using default host script (no per-project run.py)")
+
+        host_ctx = HostScriptContext(
+            scaffold=self.scaffold,
+            shouter=self.shouter,
+            params={},
+            logbook=self.logbook,
+            state=self.state,
+        )
+
+        scaffold_worker = self._worker("scaffold")
+        shouter_worker = self._worker("chipshouter")
+        shover_worker = self._worker("chipshover")
+
+        self.stop_flag.clear()
+        self.state.scan.active = True
+        self.state.scan.completed = 0
+        self.state.scan.total = total
+
+        # Set scaffold trigger mode for the campaign.
+        if self.scaffold.connected:
+            try:
+                await scaffold_worker.call(self.scaffold.set_trigger_mode, trigger_mode)
+            except Exception as exc:
+                LOGGER.warning("scaffold set_trigger_mode(%s): %s", trigger_mode, exc)
+
+        # Host script setup. Failure here aborts the whole campaign.
+        try:
+            host_mod.setup(host_ctx)
+        except Exception as exc:
+            LOGGER.exception("Host script setup() failed")
+            self.broadcast("error", {
+                "campaign_id": campaign_id,
+                "detail": f"Host script setup failed: {exc}",
+            })
+            self.state.scan.active = False
+            return {"ok": False, "reason": f"setup failed: {exc}"}
+
+        self.broadcast("campaign_progress", {
+            "campaign_id": campaign_id,
+            "phase": "started",
+            "completed": 0,
+            "total": total,
+            "current_xyz": None,
+            "current_sweep": None,
+        })
+
+        completed = 0
+        try:
+            # Auto-arm + configure ChipSHOUTER once at campaign start.
+            if auto_arm and self.shouter.connected:
+                try:
+                    await shouter_worker.call(
+                        self.shouter.configure,
+                        voltage=int(c.get("shouter_voltage", 250)),
+                        pulse_width_ns=int(c.get("shouter_pulse_width_ns", 80)),
+                        pulse_repeat=1,
+                        pulse_deadtime_ms=10,
+                        arm_timeout_min=1,
+                        mute=bool(c.get("shouter_mute", True)),
+                    )
+                    await shouter_worker.call(self.shouter.arm, clear_faults=True)
+                except Exception as exc:
+                    LOGGER.exception("Auto-arm failed")
+                    self.broadcast("error", {
+                        "campaign_id": campaign_id,
+                        "detail": f"Auto-arm failed: {exc}",
+                    })
+
+            for (x, y, z, xi, yi, zi) in grid_pts:
+                if self.stop_flag.is_set():
+                    LOGGER.info("Campaign %s stop_flag set; breaking grid loop", campaign_id)
+                    break
+
+                # Move to grid point.
+                try:
+                    await shover_worker.call(self.shover.move_absolute_logical, x, y, z)
+                    self.state.position_logical = (x, y, z)
+                    self.state.scan.current_xyz = (x, y, z)
+                    self.broadcast("position", {
+                        "x": x, "y": y, "z": z,
+                        "machine_x": self.state.position_machine[0],
+                        "machine_y": self.state.position_machine[1],
+                        "machine_z": self.state.position_machine[2],
+                    })
+                except Exception as exc:
+                    LOGGER.exception("Move to (%.3f, %.3f, %.3f) failed", x, y, z)
+                    self.broadcast("error", {
+                        "campaign_id": campaign_id,
+                        "detail": f"Move failed at ({x:.3f}, {y:.3f}, {z:.3f}): {exc}",
+                    })
+                    continue
+
+                for delay_us in delays:
+                    if self.stop_flag.is_set():
+                        break
+                    for width_ns in widths:
+                        if self.stop_flag.is_set():
+                            break
+                        for voltage_v in voltages:
+                            if self.stop_flag.is_set():
+                                break
+
+                            # Apply voltage to ChipSHOUTER if it varies.
+                            if voltage_v is not None and self.shouter.connected:
+                                try:
+                                    await shouter_worker.call(
+                                        self.shouter.configure,
+                                        voltage=int(voltage_v),
+                                        pulse_width_ns=int(width_ns or c.get("shouter_pulse_width_ns", 80)),
+                                    )
+                                except Exception as exc:
+                                    LOGGER.warning("Voltage set failed: %s", exc)
+
+                            pulse_params = {
+                                "delay_us": delay_us,
+                                "pulse_width_ns": width_ns,
+                                "voltage_v": voltage_v,
+                                "shouter_voltage": voltage_v or c.get("shouter_voltage"),
+                                "shouter_pulse_width_ns": c.get("shouter_pulse_width_ns"),
+                            }
+
+                            for _ in range(attempts_per_point):
+                                if self.stop_flag.is_set():
+                                    break
+                                try:
+                                    await self.perform_attempt(
+                                        verdict_timeout_s=verdict_timeout_s,
+                                        pulse_params=pulse_params,
+                                        host_script=host_mod,
+                                        host_ctx=host_ctx,
+                                        campaign_id=campaign_id,
+                                        project_id=project_id,
+                                        project_version=project_version,
+                                        build_sha=build_sha,
+                                        target_pc=target_pc,
+                                        trigger_mode=trigger_mode,
+                                        shouter_auto_arm=auto_arm,
+                                    )
+                                    completed += 1
+                                    self.state.scan.completed = completed
+                                    if status is not None:
+                                        status.completed_attempts = completed
+                                    # Periodic campaign_progress (every attempt
+                                    # is cheap — broadcast batches drop oldest).
+                                    self.broadcast("campaign_progress", {
+                                        "campaign_id": campaign_id,
+                                        "phase": "running",
+                                        "completed": completed,
+                                        "total": total,
+                                        "current_xyz": [x, y, z],
+                                        "current_sweep": {
+                                            "delay_us": delay_us,
+                                            "pulse_width_ns": width_ns,
+                                            "voltage_v": voltage_v,
+                                        },
+                                    })
+                                except Disarmed as exc:
+                                    LOGGER.warning("Campaign %s disarmed: %s", campaign_id, exc)
+                                    self.broadcast("error", {
+                                        "campaign_id": campaign_id,
+                                        "detail": f"Disarmed mid-campaign: {exc}",
+                                    })
+                                    self.stop_flag.set()
+                                    break
+                                except RateLimited as exc:
+                                    LOGGER.warning("Rate limited: %s — sleeping 200ms", exc)
+                                    await asyncio.sleep(0.2)
+                                except Exception as exc:
+                                    LOGGER.exception("Attempt failed; continuing")
+                                    self.broadcast("error", {
+                                        "campaign_id": campaign_id,
+                                        "detail": f"Attempt error: {exc}",
+                                    })
+        finally:
+            self.state.scan.active = False
+
+            # Host script teardown — log but don't propagate.
+            try:
+                host_mod.teardown(host_ctx)
+            except Exception as exc:
+                LOGGER.warning("Host script teardown() failed: %s", exc)
+
+            if auto_arm and self.shouter.connected:
+                try:
+                    await shouter_worker.call(self.shouter.disarm_safe)
+                except Exception:
+                    pass
+
+            phase = "stopped" if self.stop_flag.is_set() else "completed"
+            self.broadcast("campaign_progress", {
+                "campaign_id": campaign_id,
+                "phase": phase,
+                "completed": completed,
+                "total": total,
+                "current_xyz": None,
+                "current_sweep": None,
+            })
+            LOGGER.info(
+                "Campaign %s %s: %d / %d attempts", campaign_id, phase, completed, total,
+            )
+
+        return {"ok": True, "completed": completed, "total": total, "campaign_id": campaign_id}
+
+    # ---- replay ----------------------------------------------------------
+
+    async def replay(self, run_id: str) -> Dict[str, Any]:
+        """Re-execute the attempt identified by ``run_id``.
+
+        Fetches the AttemptResult from the logbook, jogs the stage to its
+        (x, y, z) position, and re-fires the same pulse parameters.
         """
-        raise NotImplementedError("replay")
+        entry = self.logbook.get(run_id)
+        if entry is None:
+            raise RuntimeError(f"Run {run_id} not found in logbook")
+
+        x, y, z = entry.get("x", 0.0), entry.get("y", 0.0), entry.get("z", 0.0)
+        trigger_mode = entry.get("trigger_mode", "software")
+        project_id = entry.get("project_id") or "_replay"
+
+        host_mod, _ = _load_host_script(project_id) if project_id != "_replay" else (None, None)
+        if host_mod is None:
+            host_mod = _default_host_script(self.scaffold)
+
+        host_ctx = HostScriptContext(
+            scaffold=self.scaffold,
+            shouter=self.shouter,
+            params={},
+            logbook=self.logbook,
+            state=self.state,
+        )
+
+        shover_worker = self._worker("chipshover")
+
+        # Jog to position.
+        try:
+            await shover_worker.call(self.shover.move_absolute_logical, x, y, z)
+            self.state.position_logical = (x, y, z)
+            self.broadcast("position", {
+                "x": x, "y": y, "z": z,
+                "machine_x": self.state.position_machine[0],
+                "machine_y": self.state.position_machine[1],
+                "machine_z": self.state.position_machine[2],
+            })
+        except Exception as exc:
+            raise RuntimeError(f"Replay jog to ({x}, {y}, {z}) failed: {exc}")
+
+        pulse_params = {
+            "delay_us": entry.get("glitch_delay_us"),
+            "pulse_width_ns": entry.get("pulse_width_ns"),
+            "voltage_v": entry.get("shouter_voltage"),
+            "shouter_voltage": entry.get("shouter_voltage"),
+            "shouter_pulse_width_ns": entry.get("shouter_pulse_width_ns"),
+        }
+
+        result = await self.perform_attempt(
+            verdict_timeout_s=0.5,
+            pulse_params=pulse_params,
+            host_script=host_mod,
+            host_ctx=host_ctx,
+            campaign_id=None,
+            project_id=entry.get("project_id"),
+            project_version=entry.get("project_version"),
+            build_sha=entry.get("build_sha"),
+            target_pc=entry.get("target_pc"),
+            trigger_mode=trigger_mode,
+            shouter_auto_arm=False,  # replay is single-shot; caller arms
+        )
+        return result["entry"]

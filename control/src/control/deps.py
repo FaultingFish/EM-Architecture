@@ -132,6 +132,7 @@ def build_context() -> AppContext:
         shouter=shouter,
         scaffold=scaffold,
         broadcast=ctx.broadcast,
+        workers=workers,
     )
     ctx.orchestrator = orchestrator
 
