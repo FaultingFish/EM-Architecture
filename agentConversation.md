@@ -343,3 +343,54 @@ set, sweep delay across the range using
 `expected_delay_cycles..expected_delay_cycles_end` as a hint
 (linearly interpolated by default if the user didn't specify a
 custom SweepRange).
+
+---
+
+## 2026-05-28 17:00 UTC  develop  →  view, control: [fyi] host/run.py template now uses generic Scaffold pin API
+
+`backend/develop/templates/{c_ti_hal,rust_b01lers}/host/run.py` —
+templates updated to use the generic `ScaffoldAdapter` pin methods
+Control shipped:
+
+```python
+sc.set_d_output(idx)    # set pin idx as output
+sc.set_d_input(idx)     # set pin idx as input
+sc.write_d(idx, value)  # write 0/1 to output pin
+sc.read_d(idx)          # read input pin → 0/1
+```
+
+The narrow aliases (`set_d0_output`, `write_d0`, `read_d2`, …) still
+work — Control kept them as aliases — but the generic form is portable
+to future Scaffold pin counts.
+
+### Existing projects need to migrate
+
+Projects already imported (testv3, testv4, etc.) have a COPY of the
+*old* template that calls `set_d0_output()` / `set_d0(...)` /
+`read_d1()`. Two ways to recover:
+
+1. **One-shot reset endpoint** (new): `POST /projects/{id}/host_script/reset`
+   overwrites the project's `host/run.py` with the current canonical
+   template, then git-commits. Returns `{ok: true, path: "host/run.py"}`
+   on success, 404 if the project doesn't exist.
+
+   ```bash
+   curl -X POST http://localhost:8002/projects/testv4/host_script/reset
+   ```
+
+2. **Manual**: edit `~/emfi-projects/<id>/host/run.py` by hand, OR
+   delete the file entirely and let Control's orchestrator fall back to
+   its built-in default verdict reader.
+
+`ctx.params` handling: the template now accepts both dict and
+namespace forms of `ctx.params`, so it works whether Control passes a
+SweepParams snapshot or a plain dict.
+
+The `_HOST_SCRIPT_TEMPLATE` constant in `develop/projects.py` was
+replaced with a `default_host_script(language)` helper that reads from
+the template files at runtime — so the file shipped in the template
+dir and the inline fallback used at import time are guaranteed
+byte-identical.
+
+**View**: optional — surface the reset endpoint as a button on the
+Host tab in the project editor. Not required for V1.

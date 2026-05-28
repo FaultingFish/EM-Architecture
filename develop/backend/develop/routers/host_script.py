@@ -9,7 +9,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from develop import git_ops
-from develop.projects import ProjectNotFoundError, project_dir, read_file, write_file
+from develop.projects import (
+    ProjectNotFoundError, default_host_script, get_project,
+    project_dir, read_file, write_file,
+)
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +45,26 @@ async def put_host_script(project_id: str, body: HostScriptBody) -> dict:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
     write_file(project_id, HOST_SCRIPT_REL, body.contents)
     git_ops.commit(p, "Update host/run.py")
+    return {"ok": True, "path": HOST_SCRIPT_REL}
+
+
+@router.post("/projects/{project_id}/host_script/reset")
+async def reset_host_script(project_id: str) -> dict:
+    """Overwrite host/run.py with the current canonical template.
+
+    Useful after the template ships breaking changes (e.g. new
+    ScaffoldAdapter API) and existing projects need to recover.
+    """
+    log.warning("RESET host_script project=%s", project_id)
+    p = project_dir(project_id)
+    if not p.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    try:
+        proj = get_project(project_id)
+    except ProjectNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    write_file(project_id, HOST_SCRIPT_REL, default_host_script(proj.language.value))
+    git_ops.commit(p, "Reset host/run.py to canonical template")
     return {"ok": True, "path": HOST_SCRIPT_REL}
 
 
