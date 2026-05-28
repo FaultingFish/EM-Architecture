@@ -47,7 +47,7 @@
   </aside>
 
   <section class="center">
-    <Scene3D bind:this={scene3d} />
+    <Scene3D bind:this={scene3d} bedSize={100} />
   </section>
 
   <aside class="right">

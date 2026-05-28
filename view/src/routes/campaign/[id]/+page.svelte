@@ -53,7 +53,7 @@
 
   <div class="split">
     <section class="scene-section">
-      <Scene3D />
+      <Scene3D bedSize={100} />
     </section>
     <aside class="log-section">
       <div class="panel">

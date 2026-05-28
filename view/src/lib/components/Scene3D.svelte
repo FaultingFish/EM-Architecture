@@ -19,6 +19,11 @@
 
   export let scanBox: { width: number; height: number; depth: number } | null = null;
 
+  // Physical bed size in mm. Drives grid extent, axis length, and default
+  // camera framing so the scene matches the real lab geometry. Override per
+  // deployment (the lab rig has a ~100mm working area).
+  export let bedSize = 100;
+
   const OUTCOME_COLORS: Record<string, number> = {
     glitch: 0x00c853,
     hang: 0xff5252,
@@ -34,7 +39,7 @@
     scene.background = new THREE.Color(0x0a0b0f);
 
     camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 0.01, 5000);
-    camera.position.set(20, 20, 20);
+    camera.position.set(bedSize * 0.8, bedSize * 0.8, bedSize * 0.8);
     camera.up.set(0, 0, 1);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -45,17 +50,27 @@
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambient);
     const dir = new THREE.DirectionalLight(0xffffff, 0.7);
-    dir.position.set(10, 20, 30);
+    dir.position.set(bedSize * 0.1, bedSize * 0.2, bedSize * 0.3);
     scene.add(dir);
 
-    const axes = new THREE.AxesHelper(5);
+    // Axes emanate from the logical origin (bottom-left of the scan area).
+    const axes = new THREE.AxesHelper(bedSize / 4);
     scene.add(axes);
 
-    const grid = new THREE.GridHelper(100, 100, 0x222637, 0x1c2030);
-    grid.rotation.x = Math.PI / 2;
-    scene.add(grid);
+    // Two grids for multi-scale reference, both spanning [0, bedSize] in X/Y.
+    // Fine: 1mm divisions, dim. Coarse overlay: 10mm divisions, brighter.
+    const fineGrid = new THREE.GridHelper(bedSize, bedSize, 0x222637, 0x1c2030);
+    fineGrid.rotation.x = Math.PI / 2;
+    fineGrid.position.set(bedSize / 2, bedSize / 2, 0);
+    scene.add(fineGrid);
 
-    const coneGeo = new THREE.ConeGeometry(0.5, 1.2, 16);
+    const coarseGrid = new THREE.GridHelper(bedSize, 10, 0x3a4258, 0x2e3447);
+    coarseGrid.rotation.x = Math.PI / 2;
+    // Tiny Z lift avoids z-fighting with the coincident fine-grid lines.
+    coarseGrid.position.set(bedSize / 2, bedSize / 2, 0.02);
+    scene.add(coarseGrid);
+
+    const coneGeo = new THREE.ConeGeometry(2, 5, 16);
     const coneMat = new THREE.MeshStandardMaterial({ color: 0x00d18f });
     probe = new THREE.Mesh(coneGeo, coneMat);
     probe.rotation.x = Math.PI;
@@ -64,6 +79,7 @@
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
+    controls.target.set(bedSize / 2, bedSize / 2, 0);
 
     for (const outcome of Object.keys(OUTCOME_COLORS)) {
       trails[outcome] = { points: [], mesh: null };
@@ -138,10 +154,12 @@
     const positions = new Float32Array(trail.points.flat());
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    // Screen-pixel sized points (sizeAttenuation: false) stay visible at any
+    // zoom — at lab scale (~100mm) world-sized points become subpixel.
     const mat = new THREE.PointsMaterial({
       color: OUTCOME_COLORS[outcome],
-      size: 0.4,
-      sizeAttenuation: true,
+      size: 8,
+      sizeAttenuation: false,
     });
     trail.mesh = new THREE.Points(geo, mat);
     scene.add(trail.mesh);
@@ -154,7 +172,7 @@
       highlightRing.geometry.dispose();
       highlightRing.material.dispose();
     }
-    const geo = new THREE.RingGeometry(0.8, 1.0, 24);
+    const geo = new THREE.RingGeometry(3, 4, 24);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
     highlightRing = new THREE.Mesh(geo, mat);
     highlightRing.position.set(x, y, z + 0.01);
@@ -164,8 +182,29 @@
 
   export function resetView() {
     if (!camera || !controls) return;
-    camera.position.set(20, 20, 20);
-    controls.target.set(0, 0, 0);
+    camera.position.set(bedSize * 0.8, bedSize * 0.8, bedSize * 0.8);
+    controls.target.set(bedSize / 2, bedSize / 2, 0);
+  }
+
+  export function autoFit() {
+    if (!THREE || !camera || !controls) return;
+    const bbox = new THREE.Box3();
+    for (const trail of Object.values(trails)) {
+      for (const p of trail.points) {
+        bbox.expandByPoint(new THREE.Vector3(p[0], p[1], p[2]));
+      }
+    }
+    if (bbox.isEmpty()) {
+      toasts.info('No attempt data to fit yet');
+      return;
+    }
+    // Expand the bbox 10% so points aren't flush against the frame edge.
+    const center = bbox.getCenter(new THREE.Vector3());
+    const size = bbox.getSize(new THREE.Vector3()).multiplyScalar(1.1);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const dist = Math.max(maxDim * 2, 20);
+    camera.position.set(center.x + dist, center.y + dist, center.z + dist);
+    controls.target.copy(center);
   }
 
   async function onDoubleClick(ev: MouseEvent) {
@@ -193,6 +232,7 @@
   <div bind:this={container} class="scene"></div>
   <div class="overlay">
     <button on:click={resetView}>Reset view</button>
+    <button on:click={autoFit}>Auto-fit to data</button>
   </div>
 </div>
 
