@@ -72,6 +72,9 @@ class FakeScaffold:
             "fault": False, "heartbeat_alive": True, "campaign_complete": False,
         }
         self.power_cycles = 0
+        self.pin_writes: List[tuple] = []
+        self.pin_outputs: List[int] = []
+        self.pin_inputs: List[int] = []
 
     def set_trigger_mode(self, mode: str) -> None:
         self.trigger_mode = mode
@@ -81,6 +84,20 @@ class FakeScaffold:
 
     def wait_verdict(self, timeout_s: float) -> Dict[str, Any]:
         return dict(self.next_verdict)
+
+    # Pin I/O stubs so host scripts that call the ScaffoldAdapter pin
+    # surface from setup()/attempt() don't blow up under test.
+    def set_d_output(self, idx: int) -> None:
+        self.pin_outputs.append(idx)
+
+    def set_d_input(self, idx: int) -> None:
+        self.pin_inputs.append(idx)
+
+    def write_d(self, idx: int, value: int) -> None:
+        self.pin_writes.append((idx, value))
+
+    def read_d(self, idx: int) -> int:
+        return 0
 
     def dut_power_cycle(self) -> None:
         self.power_cycles += 1

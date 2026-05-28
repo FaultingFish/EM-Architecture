@@ -177,15 +177,21 @@ class ScaffoldAdapter(BaseAdapter):
     # ------------------------------------------------------------------
     # Pin I/O surface used by per-project host/run.py scripts.
     #
-    # donjon-scaffold's IO model:
-    #   pin.value = 0/1  -> drives the pin as a push-pull output
-    #   pin.value = None -> high-Z (disconnect from any peripheral)
-    #   read pin.value   -> senses external input
+    # donjon-scaffold 0.9.5 IO model (introspected — docstring lies about
+    # the setter):
+    #   IO.value         -> READ-ONLY property; getter senses external input
+    #   pin << 0 or 1    -> Signal.__lshift__ → sc.sig_connect(pin, value)
+    #                        routes a constant signal to drive the pin;
+    #                        equivalent to sc.sig_connect(pin, value)
+    #   pin.reg_value    -> the underlying Register (bit 0 = value,
+    #                        bit 1 = event); writable but bypasses the
+    #                        signal-routing matrix
     #
-    # There is no separate "direction" flag — direction is implicit in how
-    # the pin is used. ``set_d_output(idx)`` drives the pin low to claim
-    # it as an output; ``set_d_input(idx)`` puts it in high-Z so external
-    # signal can be read.
+    # Direction is implicit: a pin with no signal driving it is an input
+    # (high-Z, .value getter senses external); a pin with sig_connect(pin, N)
+    # is an output driven to N. There is no per-pin disconnect; the
+    # nuclear option is sc.sig_disconnect_all() which is too broad.
+    # ``set_d_input`` is therefore a no-op declaration in this lib version.
     # ------------------------------------------------------------------
 
     def _get_pin(self, idx: int) -> Any:
@@ -197,17 +203,21 @@ class ScaffoldAdapter(BaseAdapter):
     def set_d_output(self, idx: int) -> None:
         """Claim d<idx> as a push-pull output, driving low initially."""
         self._require_connected()
-        self._get_pin(idx).value = 0
+        self._impl.sig_connect(self._get_pin(idx), 0)
 
     def set_d_input(self, idx: int) -> None:
-        """Put d<idx> in high-Z input mode."""
+        """Declare d<idx> as an input.
+
+        No-op on donjon-scaffold 0.9.5: a pin with no peripheral connected
+        is already an input. Kept for symmetry with set_d_output and the
+        existing host-script template.
+        """
         self._require_connected()
-        self._get_pin(idx).value = None
 
     def write_d(self, idx: int, value: int) -> None:
         """Drive d<idx> low (0) or high (1)."""
         self._require_connected()
-        self._get_pin(idx).value = 1 if value else 0
+        self._impl.sig_connect(self._get_pin(idx), 1 if value else 0)
 
     def read_d(self, idx: int) -> int:
         """Sense the current logic level on d<idx>."""

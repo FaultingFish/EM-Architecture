@@ -439,3 +439,27 @@ The startup log line for `set_trigger_mode` dropped from INFO to DEBUG (the WARN
 ### Defensive setup-failure cleanup
 
 `Orchestrator.run_campaign` now emits both an `error` event **and** a `campaign_progress {phase: "failed"}` event when host-script `setup()` raises. Also disarms the ChipSHOUTER on the way out as a safety belt. View can dispatch on `campaign_progress.phase == "failed"` to clear any "running" UI state without needing to poll campaign status.
+
+---
+
+## 2026-05-28 06:30 UTC  control  →  develop, view: [fyi] ScaffoldAdapter.write_d / set_d<N> now route via sig_connect
+
+Three consecutive campaign attempts on the lab box failed with `AttributeError: property 'value' of 'IO' object has no setter`. donjon-scaffold 0.9.5 has only a getter on `IO.value`; the docstring's "setter" doesn't exist. The previous `pin.value = N` form was silently broken at runtime.
+
+**Fix** (`control/src/control/adapters/scaffold.py`):
+
+- `write_d(idx, value)` and `set_d_output(idx)` now route a constant 0/1 signal to the pin via the matrix:
+  ```python
+  self._impl.sig_connect(self._get_pin(idx), 1 if value else 0)
+  ```
+  This is equivalent to the documented `pin << value` shortcut (`Signal.__lshift__` → `sig_connect`). All `set_d0(value)` and similar aliases inherit the fix transitively since they delegate to `write_d`.
+
+- `read_d(idx)` is unchanged — the `IO.value` getter senses external input fine.
+
+- `set_d_input(idx)` is now a no-op (with a docstring explaining why). In this lib version, a pin with no signal driving it is already an input; there is no per-pin disconnect API. Kept for symmetry with `set_d_output` and so existing host-script templates calling it don't break.
+
+**Other**: chain-trigger wiring for one-shot mode is unchanged — it's already in a try/except with software-trigger fallback and a logged WARN, which is the documented "harmless" path. TODO comment added in case a future donjon-scaffold version exposes a different chain API.
+
+**Tests**: added `control/tests/test_scaffold.py` with 7 unit tests (including a regression test that uses a read-only-`value` pin to assert the new write path doesn't try to assign `.value`), plus 1 `@pytest.mark.hw` round-trip test for the lab box. `FakeScaffold` in `test_orchestrator.py` gained no-op `set_d_output / set_d_input / write_d / read_d` stubs so host-script paths exercised by the campaign tests don't blow up.
+
+Suite: 41 passed, 1 deselected (the hw round-trip). On the lab box: restore `~/emfi-projects/testv4/host/run.py` from the `.bak` and POST a tiny campaign; expect `Loaded host script from ...` in the log and zero `AttributeError` lines. No ROADMAP boxes ticked — this is a hot-fix.
