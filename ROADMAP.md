@@ -29,6 +29,8 @@ Each item names the owning app(s) and a short description. Cross-app items list 
   - [x] develop: storage + REST endpoints
   - [ ] view: picker on campaign config form
 - [ ] **GlitchTarget range** — `pc_end` field so a single target spans an instruction range; campaign sweeps delay across the range. **(develop protocol + view picker)**
+  - [x] develop: protocol fields + storage round-trip
+  - [ ] view: range-select in AssemblyView
 - [ ] **Stop conditions** — "stop after N glitches", "stop on first crash", "stop after X minutes". **(control orchestrator + view UI)**
 - [ ] **Heatmap drill-down** — click a hot cell → see the attempts that produced glitches, with delay/voltage/pulse-width/target-PC for each. **(view, reads existing /runs)**
 - [ ] **Heatmap parameter histogram** — `(delay_us, pulse_width_ns)` joint distribution for cells with ≥N glitches; finds sweet spots. **(view)**

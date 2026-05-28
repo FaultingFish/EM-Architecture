@@ -44,8 +44,10 @@ export interface BuildArtifact {
 
 export interface GlitchTarget {
   pc_address: number;
+  pc_end?: number | null;
   name: string;
   expected_delay_cycles?: number | null;
+  expected_delay_cycles_end?: number | null;
   notes?: string | null;
   created_at: string;
 }

@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Language(str, Enum):
@@ -81,16 +81,49 @@ class AssemblyListing(BaseModel):
 
 
 class GlitchTarget(BaseModel):
-    """User-annotated target instruction. Stored in `targets.json` per project."""
+    """User-annotated target instruction or range. Stored in `targets.json` per project.
+
+    Set `pc_end` to mark a contiguous instruction range; the campaign engine
+    will sweep delay across the range. Leave `pc_end` as None for a
+    single-instruction target.
+    """
 
     pc_address: int
+    pc_end: Optional[int] = Field(
+        None,
+        description="If set, target spans [pc_address, pc_end] (inclusive). "
+        "None = single instruction.",
+    )
     name: str
     expected_delay_cycles: Optional[int] = Field(
         None,
         description="Cycles from a known reference point (e.g. trigger rising edge)",
     )
+    expected_delay_cycles_end: Optional[int] = Field(
+        None,
+        description="Expected delay at pc_end. Only meaningful when pc_end is set.",
+    )
     notes: Optional[str] = None
     created_at: datetime
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "GlitchTarget":
+        if self.pc_end is not None and self.pc_end <= self.pc_address:
+            raise ValueError(
+                f"pc_end ({self.pc_end:#x}) must be > pc_address ({self.pc_address:#x})"
+            )
+        if (
+            self.pc_end is not None
+            and self.expected_delay_cycles is not None
+            and self.expected_delay_cycles_end is None
+        ):
+            import warnings
+            warnings.warn(
+                "Range target has expected_delay_cycles but no expected_delay_cycles_end; "
+                "delay sweep across the range will fall back to a single value.",
+                stacklevel=2,
+            )
+        return self
 
 
 class CampaignPreset(BaseModel):

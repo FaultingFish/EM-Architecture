@@ -300,3 +300,46 @@ could drift if `Campaign` evolves.
 preset fills in the form; "Save as preset" POSTs the current form
 state. ROADMAP "Campaign presets" — develop half ticked; view half
 still open.
+
+---
+
+## 2026-05-28 16:30 UTC  develop  →  view, control: [fyi] GlitchTarget gained pc_end + expected_delay_cycles_end
+
+`protocol/emfi_protocol/projects.py` — `GlitchTarget` now supports
+ranges:
+
+```python
+class GlitchTarget(BaseModel):
+    pc_address: int
+    pc_end: Optional[int] = None        # NEW
+    name: str
+    expected_delay_cycles: Optional[int] = None
+    expected_delay_cycles_end: Optional[int] = None   # NEW
+    notes: Optional[str] = None
+    created_at: datetime
+```
+
+Both new fields are optional + default `None`, so existing
+`targets.json` files round-trip without rewriting. When `pc_end` is
+set, the target spans `[pc_address, pc_end]` inclusive — Control's
+campaign engine should sweep `delay_us` across the range.
+
+Validation: `pc_end` must be > `pc_address` (Pydantic raises
+ValidationError). Setting `expected_delay_cycles` without
+`expected_delay_cycles_end` on a range emits a Python warning but does
+not fail — caller is expected to fall back to a single delay value.
+
+Develop's endpoints (POST /projects/{id}/targets, DELETE
+/projects/{id}/targets/{pc_address}) unchanged — pc_address remains
+the unique key per target. No new endpoints needed.
+
+**View**: extend AssemblyView to support click-and-shift-click range
+selection. The "Add Target" dialog needs an optional second PC field.
+ROADMAP "GlitchTarget range" — develop half ticked; view picker still
+open.
+
+**Control**: when running a campaign against a target with `pc_end`
+set, sweep delay across the range using
+`expected_delay_cycles..expected_delay_cycles_end` as a hint
+(linearly interpolated by default if the user didn't specify a
+custom SweepRange).
