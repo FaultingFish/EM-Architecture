@@ -3,15 +3,19 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { armStore } from '$lib/stores/arm';
-  import { devicesStore } from '$lib/stores/devices';
+  import { devicesStore, KNOWN_DEVICES, placeholderStatus } from '$lib/stores/devices';
   import { activeCampaign } from '$lib/stores/campaign';
   import ArmButton from '$lib/components/ArmButton.svelte';
   import StopButton from '$lib/components/StopButton.svelte';
-  import DeviceStatusCard from '$lib/components/DeviceStatusCard.svelte';
+  import DevicePill from '$lib/components/DevicePill.svelte';
   import Toast from '$lib/components/Toast.svelte';
   import { stopCampaign, disarm } from '$lib/api/control';
   import { connect } from '$lib/ws/control_ws';
   import { toasts } from '$lib/stores/toast';
+
+  // Always render a pill for every known device, falling back to a placeholder
+  // (unavailable) until Control emits a device_status event for it.
+  $: pillDevices = KNOWN_DEVICES.map((n) => $devicesStore.get(n) ?? placeholderStatus(n));
 
   onMount(() => {
     connect();
@@ -43,16 +47,13 @@
       <a href="/assembly" class:active={currentPath === '/assembly'}>Assembly</a>
     </nav>
 
-    <div class="topbar-right">
-      <div class="device-lights">
-        {#each [...$devicesStore.values()] as dev (dev.name)}
-          <DeviceStatusCard device={dev} />
-        {/each}
-        {#if $devicesStore.size === 0}
-          <span class="no-devices">no devices</span>
-        {/if}
-      </div>
+    <div class="device-strip">
+      {#each pillDevices as dev (dev.name)}
+        <DevicePill device={dev} />
+      {/each}
+    </div>
 
+    <div class="topbar-right">
       <ArmButton />
 
       <span class="arm-indicator" class:armed={$armStore.armed}>
@@ -124,11 +125,13 @@
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    margin-left: auto;
   }
 
-  .device-lights { display: flex; gap: 0.3rem; }
-  .no-devices { color: var(--muted); font-size: 11px; }
+  .device-strip {
+    display: flex;
+    gap: 0.35rem;
+    margin-left: auto;
+  }
 
   .arm-indicator {
     padding: 0.2rem 0.5rem;
