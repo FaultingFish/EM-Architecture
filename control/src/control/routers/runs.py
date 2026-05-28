@@ -41,10 +41,17 @@ async def get_run(run_id: str, ctx: AppContext = Depends(get_ctx)) -> Dict[str, 
 async def heatmap(
     campaign: Optional[str] = Query(None),
     z: Optional[float] = Query(None),
-    outcome: str = Query("glitch"),
+    outcome: Optional[str] = Query(
+        None, description="Filter to a single outcome; omit for all outcomes"
+    ),
     ctx: AppContext = Depends(get_ctx),
 ) -> List[Dict[str, Any]]:
-    """GROUP BY (x, y) on outcome. Returns [{x, y, count}]."""
+    """Fault density grouped by (x, y).
+
+    Returns ``[{x, y, counts: {glitch, hang, crash, nothing}}]``. By default
+    all outcomes are included so the heatmap is non-empty before any glitch
+    lands; pass ``outcome`` to restrict to one bucket.
+    """
     return ctx.logbook.heatmap(campaign_id=campaign, z=z, outcome=outcome)
 
 

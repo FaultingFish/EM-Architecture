@@ -97,6 +97,18 @@ class FakeScaffold:
     def wait_verdict(self, timeout_s: float) -> Dict[str, Any]:
         return dict(self.next_verdict)
 
+    # Edge-event API used by the default host script. Derives the latched
+    # events from next_verdict so tests can drive the outcome by setting it.
+    # _D<n> maps to the verdict key the orchestrator's default host reads:
+    #   d1 → heartbeat_alive, d2 → fault, d3 → campaign_complete.
+    _EVENT_KEY = {1: "heartbeat_alive", 2: "fault", 3: "campaign_complete"}
+
+    def clear_d_event(self, idx: int) -> None:
+        pass
+
+    def read_d_event(self, idx: int) -> bool:
+        return bool(self.next_verdict.get(self._EVENT_KEY.get(idx, ""), False))
+
     # Pin I/O stubs so host scripts that call the ScaffoldAdapter pin
     # surface from setup()/attempt() don't blow up under test.
     def set_d_output(self, idx: int) -> None:

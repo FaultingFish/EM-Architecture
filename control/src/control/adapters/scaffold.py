@@ -298,9 +298,38 @@ class ScaffoldAdapter(BaseAdapter):
         self._impl.sig_connect(self._get_pin(idx), 1 if value else 0)
 
     def read_d(self, idx: int) -> int:
-        """Sense the current logic level on d<idx>."""
+        """Sense the *instantaneous* logic level on d<idx>.
+
+        For transient edges (a pin pulsed high for microseconds), an
+        instantaneous read almost always misses them — use the latched
+        edge-event API (``clear_d_event`` / ``read_d_event``) instead.
+        """
         self._require_connected()
         return int(self._get_pin(idx).value)
+
+    # ---- edge-event latches --------------------------------------------
+    # donjon-scaffold 0.9.5 latches input edges in hardware: ``pin.event``
+    # reads 1 once an edge was captured, and ``pin.clear_event()`` resets
+    # the latch (writing 0 to the event register). This catches transients
+    # that an instantaneous ``read_d`` would miss — the target asserts D2
+    # high for only a few µs on a self-detected fault.
+
+    def clear_d_event(self, idx: int) -> None:
+        """Reset the edge latch on d<idx> before the verdict window opens."""
+        self._require_connected()
+        pin = self._get_pin(idx)
+        if hasattr(pin, "clear_event"):
+            pin.clear_event()
+        else:  # pragma: no cover - 0.9.5 always has clear_event
+            try:
+                pin.event = 0
+            except Exception as exc:
+                LOGGER.debug("clear_d_event(%d) fallback failed: %s", idx, exc)
+
+    def read_d_event(self, idx: int) -> bool:
+        """True if an edge was latched on d<idx> since the last clear."""
+        self._require_connected()
+        return bool(getattr(self._get_pin(idx), "event", False))
 
     # ---- per-pin aliases matching the existing host-script template ----
     # (Newer templates should prefer set_d_output(idx) etc.)
@@ -328,6 +357,25 @@ class ScaffoldAdapter(BaseAdapter):
 
     def read_d3(self) -> int:
         return self.read_d(3)
+
+    # Edge-event aliases for the standard verdict pins (used by host scripts).
+    def clear_d1_event(self) -> None:
+        self.clear_d_event(1)
+
+    def clear_d2_event(self) -> None:
+        self.clear_d_event(2)
+
+    def clear_d3_event(self) -> None:
+        self.clear_d_event(3)
+
+    def read_d1_event(self) -> bool:
+        return self.read_d_event(1)
+
+    def read_d2_event(self) -> bool:
+        return self.read_d_event(2)
+
+    def read_d3_event(self) -> bool:
+        return self.read_d_event(3)
 
     @property
     def raw(self) -> Any:

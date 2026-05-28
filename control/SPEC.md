@@ -76,7 +76,7 @@ POST   /campaigns/{id}/stop
 
 GET    /runs?campaign=...&since=...&outcome=...&limit=...
 GET    /runs/{id}
-GET    /heatmap?campaign=...&z=...     fault density grouped by XY
+GET    /heatmap?campaign=...&z=...&outcome=...   per-cell outcome counts
 POST   /replay/{run_id}            re-execute that exact attempt
 
 POST   /arm
@@ -85,6 +85,15 @@ GET    /arm_state
 ```
 
 All responses use Pydantic models from `emfi_protocol`. Error responses use FastAPI's default `{ "detail": "..." }`.
+
+`GET /heatmap` groups attempts by `(x, y)` and returns per-outcome counts so View can color-code each cell without re-querying:
+
+```
+[ { "x": 1.0, "y": 2.0,
+    "counts": { "glitch": 2, "hang": 5, "crash": 0, "nothing": 8 } }, ... ]
+```
+
+`outcome` filters to a single bucket only when explicitly set; omit it (the default) to include every outcome — so the heatmap is non-empty before the first glitch lands. `z` narrows to one Z plane.
 
 ## Axis configuration
 
@@ -129,9 +138,9 @@ Topics:
 - `counter` — Counters snapshot
 - `attempt` — `AttemptResult` (one per attempt completed)
 - `device_status` — per-device `DeviceStatus`
-- `campaign_progress` — `{ campaign_id, completed, total, current_xyz }`
+- `campaign_progress` — `{ campaign_id, phase, completed_attempts, total_attempts, current_xyz, current_sweep }`. `phase` is one of `started | running | completed | stopped | failed` (with an optional `reason` on `failed`). Field names mirror `emfi_protocol.CampaignStatus`. `current_xyz` is `[x, y, z]` while running, `null` otherwise.
 - `state` — full `AppState.snapshot()` on connect
-- `error` — `{ detail }`
+- `error` — `{ detail, campaign_id? }`
 
 Client → server actions (kept minimal; prefer REST for commands):
 - `{ id, action: "subscribe", topics: [...] }` — optional topic filter

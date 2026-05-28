@@ -118,12 +118,28 @@ def _default_host_script(scaffold: Any) -> Any:
     class _Default:
         @staticmethod
         def setup(ctx: HostScriptContext) -> None:
-            return None
+            sc = ctx.scaffold
+            sc.set_d_input(1)
+            sc.set_d_input(2)
+            sc.set_d_input(3)
 
         @staticmethod
         def attempt(ctx: HostScriptContext) -> Dict[str, Any]:
+            # Clear the edge latches, open the verdict window, then read the
+            # latched events. This catches transient pulses (D2 high for µs on
+            # a self-detected fault, D3 falling edge at campaign end) that an
+            # instantaneous read_d would miss.
+            sc = ctx.scaffold
+            sc.clear_d_event(1)
+            sc.clear_d_event(2)
+            sc.clear_d_event(3)
             timeout_s = float(ctx.params.get("verdict_timeout_s", 0.5))
-            return ctx.scaffold.wait_verdict(timeout_s)
+            time.sleep(timeout_s)
+            return {
+                "fault": sc.read_d_event(2),
+                "heartbeat_alive": sc.read_d_event(1),
+                "campaign_complete": sc.read_d_event(3),
+            }
 
         @staticmethod
         def teardown(ctx: HostScriptContext) -> None:
@@ -534,8 +550,8 @@ class Orchestrator:
                 self.broadcast("campaign_progress", {
                     "campaign_id": campaign_id,
                     "phase": "failed",
-                    "completed": 0,
-                    "total": total,
+                    "completed_attempts": 0,
+                    "total_attempts": total,
                     "current_xyz": None,
                     "current_sweep": None,
                 })
@@ -555,8 +571,8 @@ class Orchestrator:
             self.broadcast("campaign_progress", {
                 "campaign_id": campaign_id,
                 "phase": "failed",
-                "completed": 0,
-                "total": total,
+                "completed_attempts": 0,
+                "total_attempts": total,
                 "current_xyz": None,
                 "current_sweep": None,
             })
@@ -570,8 +586,8 @@ class Orchestrator:
         self.broadcast("campaign_progress", {
             "campaign_id": campaign_id,
             "phase": "started",
-            "completed": 0,
-            "total": total,
+            "completed_attempts": 0,
+            "total_attempts": total,
             "current_xyz": None,
             "current_sweep": None,
         })
@@ -664,8 +680,8 @@ class Orchestrator:
                                     self.broadcast("campaign_progress", {
                                         "campaign_id": campaign_id,
                                         "phase": "running",
-                                        "completed": completed,
-                                        "total": total,
+                                        "completed_attempts": completed,
+                                        "total_attempts": total,
                                         "current_xyz": [x, y, z],
                                         "current_sweep": {
                                             "delay_us": delay_us,
@@ -720,8 +736,8 @@ class Orchestrator:
             payload: Dict[str, Any] = {
                 "campaign_id": campaign_id,
                 "phase": phase,
-                "completed": completed,
-                "total": total,
+                "completed_attempts": completed,
+                "total_attempts": total,
                 "current_xyz": None,
                 "current_sweep": None,
             }

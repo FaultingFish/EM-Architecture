@@ -18,11 +18,39 @@ from control.adapters.scaffold import ScaffoldAdapter
 
 
 class _FakePin:
-    """Minimal IO stand-in. Records what gets written."""
+    """Minimal IO stand-in. Records what gets written.
+
+    Models the donjon-scaffold edge latch: ``event`` reads 1 once an edge
+    was captured; ``clear_event()`` resets it. ``pulse_edge()`` simulates a
+    transient the way real hardware latches it — set ``_latched`` so a later
+    ``event`` read returns True even though the instantaneous ``value`` is 0.
+    """
 
     def __init__(self, name: str = "pin") -> None:
         self.value = 0  # getter-only on real IO; on the fake we use plain attr
         self.name = name
+        self._latched = False
+        self._fire_on_clear = False
+
+    @property
+    def event(self) -> int:
+        return 1 if self._latched else 0
+
+    def clear_event(self) -> None:
+        self._latched = False
+        # Model an edge that arrives just after the clear (i.e. during the
+        # verdict window) — the hardware latch catches it for the later read.
+        if self._fire_on_clear:
+            self._latched = True
+            self._fire_on_clear = False
+
+    def pulse_edge(self) -> None:
+        """Latch a transient edge now (already captured by hardware)."""
+        self._latched = True
+
+    def arm_window_edge(self) -> None:
+        """Arm an edge to arrive during the next verdict window (after clear)."""
+        self._fire_on_clear = True
 
 
 class _FakePgen:
@@ -284,3 +312,84 @@ def test_scaffold_pin_io_roundtrip():
         _ = sa.read_d(1)
     finally:
         sa.disconnect()
+
+
+# --------------------------------------------------------------------------
+# Edge-event latches (Bug 1: transient fault edges missed by read_d)
+# --------------------------------------------------------------------------
+
+def test_read_d_event_reflects_latch():
+    sa = ScaffoldAdapter()
+    sa._impl = _FakeImpl()
+    assert sa.read_d_event(2) is False
+    sa._impl.d2.pulse_edge()           # transient: latched, value still 0
+    assert sa._impl.d2.value == 0
+    assert sa.read_d_event(2) is True   # but the event latch caught it
+
+
+def test_clear_d_event_resets_latch():
+    sa = ScaffoldAdapter()
+    sa._impl = _FakeImpl()
+    sa._impl.d2.pulse_edge()
+    sa.clear_d_event(2)
+    assert sa.read_d_event(2) is False
+
+
+def test_event_aliases_match_indices():
+    sa = ScaffoldAdapter()
+    sa._impl = _FakeImpl()
+    sa._impl.d1.pulse_edge()
+    sa._impl.d3.pulse_edge()
+    assert sa.read_d1_event() is True
+    assert sa.read_d2_event() is False
+    assert sa.read_d3_event() is True
+    sa.clear_d1_event()
+    sa.clear_d3_event()
+    assert sa.read_d1_event() is False
+    assert sa.read_d3_event() is False
+
+
+def test_default_host_script_catches_transient_fault_edge():
+    """A fault edge during the verdict window → outcome fault=True even though
+    the instantaneous pin value is low (the Bug 1 scenario)."""
+    from control.orchestrator import HostScriptContext, _default_host_script
+
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+
+    host = _default_host_script(sa)
+    ctx = HostScriptContext(
+        scaffold=sa, shouter=None, params={"verdict_timeout_s": 0.0},
+        logbook=None, state=None,
+    )
+    host.setup(ctx)  # declares d1/d2/d3 as inputs (no-op on 0.9.5)
+
+    # Target pulses D2 (self-detected fault) and D1 (heartbeat alive)
+    # transiently *during* the verdict window — after attempt() clears the
+    # latches. The hardware latch catches them even though .value reads 0.
+    impl.d2.arm_window_edge()
+    impl.d1.arm_window_edge()
+    verdict = host.attempt(ctx)
+    assert verdict == {
+        "fault": True, "heartbeat_alive": True, "campaign_complete": False,
+    }
+
+
+def test_default_host_script_clears_before_window():
+    """Stale latches from a prior attempt must not leak into the next verdict."""
+    from control.orchestrator import HostScriptContext, _default_host_script
+
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    host = _default_host_script(sa)
+    ctx = HostScriptContext(
+        scaffold=sa, shouter=None, params={"verdict_timeout_s": 0.0},
+        logbook=None, state=None,
+    )
+    # Pre-existing stale fault latch.
+    impl.d2.pulse_edge()
+    # attempt() clears at the start of the window; nothing pulses during it.
+    verdict = host.attempt(ctx)
+    assert verdict["fault"] is False

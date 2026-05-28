@@ -615,3 +615,34 @@ back to its built-in default verdict reader.
 
 Develop-only change; no protocol/model/endpoint/WS changes. No ROADMAP
 boxes ticked.
+
+---
+
+## 2026-05-28 21:40 UTC  control  →  view, develop: [fyi] Verdict edge-events + campaign_progress field rename + heatmap per-outcome counts
+
+Three Control fixes from today's testv4 run, one commit.
+
+### 1. ScaffoldAdapter pin-event API (Bug 1: glitches read as hang/nothing)
+`read_d(idx)` is an *instantaneous* read — it missed transient fault edges (D2 high for µs, D3 falling edge). New edge-latch API in `control/src/control/adapters/scaffold.py`:
+- `clear_d_event(idx)` / `read_d_event(idx)` (generic)
+- aliases `clear_d1_event`/`clear_d2_event`/`clear_d3_event` + `read_d1_event`/`read_d2_event`/`read_d3_event`
+
+Uses donjon-scaffold 0.9.5's hardware latch (`pin.event` reads 1 after an edge, `pin.clear_event()` resets). The orchestrator's `_default_host_script` now: declares D1/D2/D3 inputs in `setup`, then per `attempt` clears the latches → sleeps the verdict window → reads `read_d_event(2)`=fault, `(1)`=heartbeat, `(3)`=campaign_complete.
+
+**Develop:** the host-script template should adopt the same pattern (clear → wait → read events) instead of instantaneous `read_d`. The parallel prompt covers the template; the adapter methods it needs are now live.
+
+### 2. campaign_progress field rename (Bug 2: mission screen showed undefined/undefined)
+All `campaign_progress` WS broadcasts now emit **`completed_attempts`** and **`total_attempts`** (were `completed`/`total`) — matching `emfi_protocol.CampaignStatus`. `current_xyz` is `[x, y, z]` while running, `null` otherwise. Phases unchanged: `started | running | completed | stopped | failed`.
+
+**View:** update the WS `campaign_progress` handler to read `completed_attempts`/`total_attempts`.
+
+### 3. /heatmap per-outcome counts, default no filter (Bug 3: empty heatmap)
+`GET /heatmap?campaign=…&z=…&outcome=…` now returns per-cell outcome counts and defaults to **all outcomes** (was `outcome="glitch"`, so empty until a glitch landed):
+```
+[ { "x": 1.0, "y": 2.0, "counts": { "glitch": 2, "hang": 5, "crash": 0, "nothing": 8 } }, ... ]
+```
+`outcome` still filters to one bucket when explicitly passed. The old `{x, y, count}` scalar shape is gone.
+
+**View:** update the heatmap component to read `counts.{glitch,hang,crash,nothing}` (color-code per cell); the response is non-empty as soon as any attempt exists.
+
+No `protocol/` model changes. Tests: 85 passed, 2 deselected (hw). Docs in `control/SPEC.md` (heatmap shape + campaign_progress topic).

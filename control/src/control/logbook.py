@@ -159,28 +159,52 @@ class Logbook:
                 continue
         return None
 
+    # All outcome buckets a cell can report (mirrors emfi_protocol.Outcome).
+    _OUTCOMES = ("glitch", "hang", "crash", "nothing")
+
     def heatmap(
         self,
         campaign_id: Optional[str] = None,
         z: Optional[float] = None,
-        outcome: str = "glitch",
+        outcome: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """GROUP BY (x, y) counting matching outcomes."""
-        query = (
-            "SELECT x, y, COUNT(*) as count FROM runs "
-            "WHERE outcome = ?"
-        )
-        params: List[Any] = [outcome]
+        """Fault density grouped by (x, y).
+
+        Returns one entry per cell with per-outcome counts so View can
+        color-code without re-querying:
+
+            [{"x": 1.0, "y": 2.0,
+              "counts": {"glitch": 2, "hang": 5, "crash": 0, "nothing": 8}}]
+
+        ``outcome`` filters to a single bucket only when explicitly set
+        (default None = include every outcome). ``campaign_id`` and ``z``
+        narrow the rows as before.
+        """
+        query = "SELECT x, y, outcome, COUNT(*) FROM runs WHERE 1=1"
+        params: List[Any] = []
+        if outcome is not None:
+            query += " AND outcome = ?"
+            params.append(outcome)
         if campaign_id:
             query += " AND campaign_id = ?"
             params.append(campaign_id)
         if z is not None:
             query += " AND z = ?"
             params.append(z)
-        query += " GROUP BY x, y"
+        query += " GROUP BY x, y, outcome"
         with self._db_lock, self._db() as db:
             rows = db.execute(query, params).fetchall()
-        return [{"x": r[0], "y": r[1], "count": r[2]} for r in rows]
+
+        cells: Dict[Any, Dict[str, Any]] = {}
+        for x, y, oc, count in rows:
+            key = (x, y)
+            cell = cells.get(key)
+            if cell is None:
+                cell = {"x": x, "y": y, "counts": {o: 0 for o in self._OUTCOMES}}
+                cells[key] = cell
+            # Tolerate unexpected/legacy outcome strings by adding the key.
+            cell["counts"][oc] = cell["counts"].get(oc, 0) + count
+        return list(cells.values())
 
     def iter_csv_rows(
         self,

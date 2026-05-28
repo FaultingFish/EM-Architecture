@@ -39,8 +39,34 @@ def test_logbook_sqlite_mirror_contains_appended_rows(tmp_path):
     lb = Logbook(tmp_path)
     lb.append({"id": "a", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 0.0})
     lb.append({"id": "b", "outcome": "nothing", "x": 1.0, "y": 2.0, "z": 0.0})
+    # Filtered to one outcome: still returns a per-cell counts dict.
     rows = lb.heatmap(outcome="glitch")
-    assert rows == [{"x": 1.0, "y": 2.0, "count": 1}]
+    assert rows == [{"x": 1.0, "y": 2.0, "counts": {"glitch": 1, "hang": 0, "crash": 0, "nothing": 0}}]
+
+
+def test_logbook_heatmap_per_outcome_counts(tmp_path):
+    lb = Logbook(tmp_path)
+    # Cell (1,2): 2 glitches, 1 hang, 1 nothing. Cell (3,4): 1 crash.
+    lb.append({"id": "a", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 0.0})
+    lb.append({"id": "b", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 0.0})
+    lb.append({"id": "c", "outcome": "hang", "x": 1.0, "y": 2.0, "z": 0.0})
+    lb.append({"id": "d", "outcome": "nothing", "x": 1.0, "y": 2.0, "z": 0.0})
+    lb.append({"id": "e", "outcome": "crash", "x": 3.0, "y": 4.0, "z": 0.0})
+
+    # Default: no outcome filter → every cell, all buckets.
+    rows = lb.heatmap()
+    by_cell = {(r["x"], r["y"]): r["counts"] for r in rows}
+    assert by_cell[(1.0, 2.0)] == {"glitch": 2, "hang": 1, "crash": 0, "nothing": 1}
+    assert by_cell[(3.0, 4.0)] == {"glitch": 0, "hang": 0, "crash": 1, "nothing": 0}
+
+
+def test_logbook_heatmap_filters_by_z(tmp_path):
+    lb = Logbook(tmp_path)
+    lb.append({"id": "a", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 0.0})
+    lb.append({"id": "b", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 0.5})
+    rows = lb.heatmap(z=0.0)
+    assert len(rows) == 1
+    assert rows[0]["counts"]["glitch"] == 1
 
 
 def test_logbook_get_by_id(tmp_path):
