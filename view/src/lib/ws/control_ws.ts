@@ -68,10 +68,39 @@ export function connect(): WebSocket {
           return next;
         });
         break;
-      case 'campaign_progress':
+      case 'campaign_progress': {
         log.debug('campaign progress', msg.payload);
-        activeCampaign.set(msg.payload);
+        const p = msg.payload ?? {};
+        // Control renamed the field `completed` → `completed_attempts` to match
+        // the CampaignStatus model. Read the new name, fall back to the old one
+        // during rollout so a not-yet-updated Control doesn't render "undefined".
+        const completed = p.completed_attempts ?? p.completed ?? 0;
+        const total = p.total_attempts ?? p.total ?? 0;
+        // Position arrives as `current_xyz` (list) on the new shape; tolerate the
+        // legacy `current_position` too. Normalize to the store's tuple shape.
+        const xyz = p.current_xyz ?? p.current_position ?? null;
+        const current_position =
+          Array.isArray(xyz) && xyz.length >= 3
+            ? ([xyz[0], xyz[1], xyz[2]] as [number, number, number])
+            : null;
+        activeCampaign.set({
+          ...p,
+          completed_attempts: completed,
+          total_attempts: total,
+          current_position,
+        });
+        // Keep the 3D probe tracking live during a campaign even if a discrete
+        // `position` event lags. Preserve any machine_* fields already in store.
+        if (current_position) {
+          positionStore.update((pos) => ({
+            ...pos,
+            x: current_position[0],
+            y: current_position[1],
+            z: current_position[2],
+          }));
+        }
         break;
+      }
       case 'error':
         log.error('error event', msg.payload);
         toasts.error(msg.payload?.error ?? 'Unknown error', { where: msg.payload?.where });

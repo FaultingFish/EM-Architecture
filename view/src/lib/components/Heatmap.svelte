@@ -1,24 +1,76 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  export let cells: { x: number; y: number; count: number }[] = [];
+  type Outcome = 'glitch' | 'hang' | 'crash' | 'nothing';
+  type Filter = 'all' | Outcome;
+
+  interface HeatCell {
+    x: number;
+    y: number;
+    counts: { glitch: number; hang: number; crash: number; nothing: number };
+  }
+
+  export let cells: HeatCell[] = [];
   export let width = 600;
   export let height = 400;
 
+  // Matches OUTCOME_COLORS in Scene3D so the 3D view and heatmap agree.
+  const OUTCOME_COLORS: Record<Outcome, string> = {
+    glitch: '#00c853',
+    hang: '#ff5252',
+    crash: '#f9a825',
+    nothing: '#607d8b',
+  };
+  const OUTCOMES: Outcome[] = ['glitch', 'hang', 'crash', 'nothing'];
+  const CHIPS: { key: Filter; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'glitch', label: 'Glitch' },
+    { key: 'hang', label: 'Hang' },
+    { key: 'crash', label: 'Crash' },
+    { key: 'nothing', label: 'Nothing' },
+  ];
+
+  let filter: Filter = 'all';
   let canvas: HTMLCanvasElement;
 
-  $: if (canvas && cells) draw(cells);
+  function cellTotal(c: HeatCell): number {
+    return c.counts.glitch + c.counts.hang + c.counts.crash + c.counts.nothing;
+  }
 
-  function draw(data: typeof cells) {
+  // The count that drives a cell's intensity under the current filter:
+  // total attempts for "all", or the single outcome's count for a specific filter.
+  function cellValue(c: HeatCell, f: Filter): number {
+    return f === 'all' ? cellTotal(c) : c.counts[f] ?? 0;
+  }
+
+  function dominantOutcome(c: HeatCell): Outcome {
+    let best: Outcome = 'nothing';
+    let bestN = -1;
+    for (const o of OUTCOMES) {
+      if (c.counts[o] > bestN) {
+        bestN = c.counts[o];
+        best = o;
+      }
+    }
+    return best;
+  }
+
+  function rgba(hex: string, alpha: number): string {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha.toFixed(3)})`;
+  }
+
+  // Redraw whenever the data or the active filter changes.
+  $: if (canvas) draw(cells, filter);
+
+  function draw(data: HeatCell[], f: Filter) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, width, height);
+
     if (data.length === 0) {
-      ctx.fillStyle = '#8b91a3';
-      ctx.font = '13px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('No heatmap data', width / 2, height / 2);
+      emptyMessage(ctx, 'No campaigns run yet');
       return;
     }
 
@@ -28,9 +80,17 @@
       if (c.x > maxX) maxX = c.x;
       if (c.y < minY) minY = c.y;
       if (c.y > maxY) maxY = c.y;
-      if (c.count > maxC) maxC = c.count;
+      const v = cellValue(c, f);
+      if (v > maxC) maxC = v;
     }
-    if (maxC === 0) return;
+
+    // Rows exist, but none match the chosen filter — a helpful empty state
+    // distinct from "no campaigns at all".
+    if (maxC === 0) {
+      const label = f === 'all' ? 'No attempts recorded yet' : `No ${f} outcomes recorded`;
+      emptyMessage(ctx, label);
+      return;
+    }
 
     const rangeX = maxX - minX || 1;
     const rangeY = maxY - minY || 1;
@@ -44,10 +104,14 @@
     const cellH = Math.max(2, drawH / ySteps);
 
     for (const c of data) {
+      const v = cellValue(c, f);
+      if (v === 0) continue; // nothing of the chosen outcome here — leave it dark
       const px = pad + ((c.x - minX) / rangeX) * drawW;
       const py = pad + ((c.y - minY) / rangeY) * drawH;
-      const intensity = c.count / maxC;
-      ctx.fillStyle = heatColor(intensity);
+      const base = f === 'all' ? OUTCOME_COLORS[dominantOutcome(c)] : OUTCOME_COLORS[f];
+      // Floor the alpha so single-attempt cells stay visible.
+      const alpha = 0.2 + 0.8 * (v / maxC);
+      ctx.fillStyle = rgba(base, alpha);
       ctx.fillRect(px - cellW / 2, py - cellH / 2, cellW, cellH);
     }
 
@@ -61,11 +125,11 @@
     ctx.fillText(maxY.toFixed(1), pad - 4, height - pad + 4);
   }
 
-  function heatColor(t: number): string {
-    if (t < 0.25) return `rgb(0, ${Math.round(t * 4 * 200)}, ${Math.round(80 + t * 4 * 175)})`;
-    if (t < 0.5) return `rgb(0, ${Math.round(200 + (t - 0.25) * 4 * 55)}, ${Math.round(255 - (t - 0.25) * 4 * 255)})`;
-    if (t < 0.75) return `rgb(${Math.round((t - 0.5) * 4 * 249)}, ${Math.round(255 - (t - 0.5) * 4 * 96)}, 0)`;
-    return `rgb(255, ${Math.round(159 - (t - 0.75) * 4 * 159)}, 0)`;
+  function emptyMessage(ctx: CanvasRenderingContext2D, text: string) {
+    ctx.fillStyle = '#8b91a3';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, width / 2, height / 2);
   }
 
   let tooltipText = '';
@@ -92,7 +156,7 @@
     const drawW = width - pad * 2;
     const drawH = height - pad * 2;
 
-    let closest: (typeof cells)[0] | null = null;
+    let closest: HeatCell | null = null;
     let bestDist = 20;
     for (const c of cells) {
       const px = pad + ((c.x - minX) / rangeX) * drawW;
@@ -101,7 +165,10 @@
       if (d < bestDist) { bestDist = d; closest = c; }
     }
     if (closest) {
-      tooltipText = `(${closest.x}, ${closest.y}) = ${closest.count}`;
+      tooltipText =
+        filter === 'all'
+          ? `(${closest.x}, ${closest.y}) g${closest.counts.glitch} h${closest.counts.hang} c${closest.counts.crash} n${closest.counts.nothing} · ${cellTotal(closest)} total`
+          : `(${closest.x}, ${closest.y}) ${filter} = ${closest.counts[filter] ?? 0}`;
       tooltipX = ev.clientX;
       tooltipY = ev.clientY;
       showTooltip = true;
@@ -110,10 +177,23 @@
     }
   }
 
-  onMount(() => { draw(cells); });
+  onMount(() => { draw(cells, filter); });
 </script>
 
 <div class="heatmap-wrap">
+  <div class="chips">
+    {#each CHIPS as chip}
+      <button
+        class="chip"
+        class:active={filter === chip.key}
+        style={chip.key === 'all' ? '' : `--chip-color: ${OUTCOME_COLORS[chip.key]}`}
+        on:click={() => (filter = chip.key)}
+      >
+        {chip.label}
+      </button>
+    {/each}
+  </div>
+
   <canvas
     bind:this={canvas}
     {width}
@@ -130,7 +210,26 @@
 
 <style>
   .heatmap-wrap { position: relative; display: inline-block; }
-  canvas { background: #111; border-radius: var(--radius); }
+  canvas { background: #111; border-radius: var(--radius); display: block; }
+
+  .chips { display: flex; gap: 0.35rem; margin-bottom: 0.5rem; }
+  .chip {
+    font-size: 11px;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .chip:hover { color: var(--fg); }
+  .chip.active {
+    color: var(--bg);
+    background: var(--chip-color, var(--accent));
+    border-color: var(--chip-color, var(--accent));
+    font-weight: 600;
+  }
+
   .tooltip {
     position: fixed;
     background: var(--panel);

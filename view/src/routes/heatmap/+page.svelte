@@ -4,7 +4,14 @@
   import { heatmap as fetchHeatmap } from '$lib/api/control';
   import { toasts } from '$lib/stores/toast';
 
-  let cells: { x: number; y: number; count: number }[] = [];
+  // New /heatmap shape: per-cell per-outcome counts (Control [fyi] 2026-05-28).
+  type HeatCell = {
+    x: number;
+    y: number;
+    counts: { glitch: number; hang: number; crash: number; nothing: number };
+  };
+
+  let cells: HeatCell[] = [];
   let zValue = 0;
   let campaignFilter = '';
   let loading = false;
