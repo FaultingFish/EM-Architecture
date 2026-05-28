@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { browser } from '$app/environment';
   import { positionStore } from '$lib/stores/position';
   import { armStore } from '$lib/stores/arm';
   import { moveAbs, setOrigin, setTopRight } from '$lib/api/control';
@@ -18,6 +19,15 @@
 
   let busy = false;
 
+  // Smallest meaningful jog — below this we treat the probe as "still at origin".
+  const EPS = 0.01;
+
+  // Step 2 gate: after set_origin the logical frame is reset to (0,0,0), so if the
+  // user hasn't jogged, both logical X and Y are within EPS of zero. Block "Set as
+  // top-right" in that case — otherwise top_right == origin and grids collapse to Z-only.
+  $: atOrigin =
+    Math.abs($positionStore.x ?? 0) < EPS && Math.abs($positionStore.y ?? 0) < EPS;
+
   $: scanBox =
     step >= 2 && originX != null && originY != null
       ? {
@@ -33,8 +43,18 @@
         }
       : null;
 
-  $: width = originX != null && topRightX != null ? Math.abs(topRightX - originX) : null;
-  $: height = originY != null && topRightY != null ? Math.abs(topRightY - originY) : null;
+  // Signed scan dimensions (top-right minus origin). A negative or near-zero span
+  // means the user never jogged far enough — surfaced as the "too small" warning below.
+  $: width = originX != null && topRightX != null ? topRightX - originX : null;
+  $: height = originY != null && topRightY != null ? topRightY - originY : null;
+
+  $: tooSmall = width != null && height != null && (width < 0.1 || height < 0.1);
+
+  // Implied grid-point count at the campaign default 1 mm step, for the "looks good" badge.
+  $: nXY =
+    width != null && height != null && !tooSmall
+      ? (Math.ceil(width / 1) + 1) * (Math.ceil(height / 1) + 1)
+      : null;
 
   function gotoStep(s: Step) {
     // Allow stepping back; only forward through buttons (which gate on data presence).
@@ -84,8 +104,26 @@
     }
   }
 
+  function clearStaleCalibration() {
+    // Drop any persisted calibration from a previous session so the campaign form
+    // can't silently inherit yesterday's origin/top-right. Scoped to calibration
+    // keys only — never a blanket localStorage.clear().
+    if (!browser) return;
+    try {
+      for (const k of Object.keys(localStorage)) {
+        if (k === 'calibration' || k.startsWith('emfi.calibration') || k.startsWith('calib.')) {
+          localStorage.removeItem(k);
+        }
+      }
+    } catch {
+      /* localStorage unavailable (private mode / disabled) — non-fatal */
+    }
+  }
+
   function finish() {
     if (originX == null || originY == null || topRightX == null || topRightY == null) return;
+    if (tooSmall) return;
+    clearStaleCalibration();
     const qs = new URLSearchParams({
       origin_x: String(originX),
       origin_y: String(originY),
@@ -153,13 +191,17 @@
 
         <div class="panel">
           <h4>Current position</h4>
-          <div class="pos-readout">
+          <div class="pos-readout live">
             <span>X <b>{$positionStore.x?.toFixed(2) ?? '—'}</b></span>
             <span>Y <b>{$positionStore.y?.toFixed(2) ?? '—'}</b></span>
             <span>Z <b>{$positionStore.z?.toFixed(2) ?? '—'}</b></span>
           </div>
           <div class="pos-readout sub">
             <span>Origin: ({originX?.toFixed(2)}, {originY?.toFixed(2)})</span>
+            <span>
+              Δ from origin: ({(($positionStore.x ?? 0) - (originX ?? 0)).toFixed(2)},
+              {(($positionStore.y ?? 0) - (originY ?? 0)).toFixed(2)})
+            </span>
           </div>
         </div>
 
@@ -168,7 +210,18 @@
           <JogPad />
         </div>
 
-        <button class="primary" on:click={setTopRightAndAdvance} disabled={busy}>
+        {#if atOrigin}
+          <p class="warn-inline">
+            ⚠ Still at origin (0, 0). Jog to the top-right corner before setting —
+            otherwise the scan grid collapses to a single column.
+          </p>
+        {/if}
+        <button
+          class="primary"
+          on:click={setTopRightAndAdvance}
+          disabled={busy || atOrigin}
+          title={atOrigin ? 'Jog at least 0.01 mm away from origin first.' : ''}
+        >
           {busy ? 'Setting…' : 'Set as top-right'}
         </button>
       {:else}
@@ -192,9 +245,29 @@
           </table>
         </div>
 
+        <div class="panel">
+          <h4>Scan area</h4>
+          <p class="scan-dims">Scan area: {width?.toFixed(2)} × {height?.toFixed(2)} mm</p>
+          {#if tooSmall}
+            <div class="banner danger">
+              Scan area too small — go back and jog further before setting top-right.
+            </div>
+          {:else}
+            <div class="badge ok">Looks good</div>
+            <p class="grid-est">≈ {nXY} grid points at the 1 mm default step</p>
+          {/if}
+        </div>
+
         <div class="actions">
           <button on:click={jogToOrigin}>Jog to origin (test)</button>
-          <button class="primary" on:click={finish}>Done → Campaign</button>
+          <button
+            class="primary"
+            on:click={finish}
+            disabled={tooSmall}
+            title={tooSmall ? 'Scan area too small — go back to step 2 and jog further.' : ''}
+          >
+            Done → Campaign
+          </button>
         </div>
       {/if}
     </div>
@@ -272,10 +345,48 @@
     font-size: 14px;
   }
   .pos-readout b { color: var(--accent); }
+  .pos-readout.live { font-size: 20px; }
   .pos-readout.sub {
     font-size: 11px;
     color: var(--muted);
     margin-top: 0.3rem;
+    flex-wrap: wrap;
+  }
+
+  .instructions p.warn-inline {
+    color: var(--warn);
+    font-size: 12px;
+    margin: 0;
+  }
+
+  .scan-dims {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--fg);
+    margin: 0 0 0.5rem;
+  }
+  .banner.danger {
+    background: rgba(255, 82, 82, 0.12);
+    border: 1px solid var(--err);
+    color: var(--err);
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 12px;
+  }
+  .badge.ok {
+    display: inline-block;
+    background: rgba(0, 200, 83, 0.15);
+    border: 1px solid var(--ok);
+    color: var(--ok);
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .grid-est {
+    color: var(--muted);
+    font-size: 11px;
+    margin: 0.4rem 0 0;
   }
 
   .scene-wrap {

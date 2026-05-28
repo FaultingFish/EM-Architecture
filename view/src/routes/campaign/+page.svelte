@@ -64,7 +64,38 @@
   });
 
   $: versions = projects.find((p: any) => p.id === selectedProject)?.versions ?? [];
-  $: canSubmit = campaignName.trim() !== '' && selectedProject !== '';
+
+  // ── Pre-flight estimate (read-only, computed before submit) ──
+  let gridAck = false;
+
+  function spanSteps(a: number, b: number, step: number): number {
+    const span = b - a;
+    if (!Number.isFinite(span) || !Number.isFinite(step) || step <= 0) return 1;
+    return Math.max(1, Math.round(span / step) + 1);
+  }
+
+  function rangeLen(r: { start: number; stop: number; step: number } | null): number {
+    if (!r || !Number.isFinite(r.step) || r.step <= 0) return 1;
+    return Math.max(1, Math.floor((r.stop - r.start) / r.step) + 1);
+  }
+
+  $: xSteps = spanSteps(grid.origin[0], grid.top_right[0], grid.step_size_mm);
+  $: ySteps = spanSteps(grid.origin[1], grid.top_right[1], grid.step_size_mm);
+  $: zSteps = spanSteps(grid.z_min_mm, grid.z_max_mm, grid.z_step_mm);
+  $: gridPts = xSteps * ySteps * zSteps;
+  $: sweepCount =
+    rangeLen(sweep.delay_us) * rangeLen(sweep.pulse_width_ns) * rangeLen(sweep.voltage_v);
+  $: attempts = Math.max(1, sweep.attempts_per_point || 1);
+  $: totalAttempts = gridPts * sweepCount * attempts;
+  $: estSeconds = Math.round(totalAttempts / 2);
+
+  // Re-prompt for tiny grids: clear the acknowledgement once the grid grows back to ≥4 pts,
+  // so a later edit that shrinks it again surfaces the warning afresh.
+  $: if (gridPts >= 4) gridAck = false;
+  $: smallGridBlocked = gridPts < 4 && !gridAck;
+
+  $: formComplete = campaignName.trim() !== '' && selectedProject !== '';
+  $: canSubmit = formComplete && !smallGridBlocked;
 
   function buildBody(): Record<string, unknown> {
     const body: Record<string, unknown> = {
@@ -159,6 +190,25 @@
       </div>
 
       <GridConfig bind:value={grid} />
+
+      <div class="panel preflight" class:warn={smallGridBlocked}>
+        <h3>Pre-flight</h3>
+        <div class="preflight-lines">
+          <div>Grid: {xSteps} × {ySteps} × {zSteps} = <b>{gridPts}</b></div>
+          <div>Sweep: {sweepCount} combos × {attempts} attempts</div>
+          <div>Total: <b>{totalAttempts}</b> attempts (~{estSeconds}s)</div>
+        </div>
+        {#if smallGridBlocked}
+          <div class="preflight-warn">
+            <p>Grid will only produce {gridPts} point{gridPts === 1 ? '' : 's'}. Did you mean this?</p>
+            <div class="preflight-actions">
+              <button type="button" class="ack" on:click={() => (gridAck = true)}>I meant it</button>
+              <button type="button" on:click={() => goto('/calibrate')}>Recalibrate</button>
+            </div>
+          </div>
+        {/if}
+      </div>
+
       <SweepConfig bind:value={sweep} />
     </div>
 
@@ -200,8 +250,10 @@
       <button class="start-btn" on:click={submit} disabled={!canSubmit || loading}>
         {loading ? 'Starting…' : 'Start Campaign'}
       </button>
-      {#if !canSubmit}
+      {#if !formComplete}
         <p class="hint">Fill in name and select a project to enable submit.</p>
+      {:else if smallGridBlocked}
+        <p class="hint">Resolve the small-grid warning above to enable submit.</p>
       {/if}
     </div>
   </div>
@@ -262,4 +314,28 @@
   .start-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .hint { color: var(--muted); font-size: 11px; margin-top: 0.25rem; }
+
+  .preflight.warn { border: 1px solid var(--warn); }
+  .preflight-lines {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .preflight-lines b { color: var(--accent); }
+  .preflight-warn {
+    margin-top: 0.6rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+  }
+  .preflight-warn p { color: var(--warn); font-size: 12px; margin: 0 0 0.4rem; }
+  .preflight-actions { display: flex; gap: 0.5rem; }
+  .preflight-actions .ack {
+    background: var(--warn);
+    color: var(--bg);
+    border-color: var(--warn);
+    font-weight: 600;
+  }
 </style>
