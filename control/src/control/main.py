@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from control.deps import ADAPTER_ATTR, DEVICE_NAMES, build_context
 from control.routers import (
     campaigns,
+    config as config_router,
     devices,
     motion,
     runs,
@@ -154,6 +155,7 @@ def create_app() -> FastAPI:
             LOGGER.warning("%s %s -> %d", request.method, request.url.path, response.status_code)
         return response
 
+    app.include_router(config_router.router)
     app.include_router(devices.router)
     app.include_router(motion.router)
     app.include_router(shouter.router)

@@ -537,3 +537,20 @@ No new WS topics or payload shapes. The only new thing you might surface: a `cam
 - `tests/test_scaffold.py`: new pgen0 fake + tests asserting the one-shot `sig_connect` path, `count`/`polarity`, seconds-conversion for delay/width, min-clamp, and that a wiring failure raises + records `last_trigger_mode_error`. Plus a `@pytest.mark.hw` bench test (`set 1 µs / 100 ns`, scope A0).
 - `tests/test_orchestrator.py`: one-shot campaign programs pgen per swept delay and fires **zero** USB pulses; a `set_trigger_mode` failure aborts the campaign with `phase=failed`.
 - Suite: **60 passed, 2 deselected** (hw). Hardware scope-verification (A0 fires ~1 µs after D0 edge, ~100 ns wide) is documented for the lab box; run `pytest -m hw` there.
+
+---
+
+## 2026-05-28 03:30 UTC  control  →  view: [fyi] Motion API now honors config.axes (invert_x/y/z, swap_xy)
+
+The long-dormant `axes` config block is now wired through the motion layer in `ChipShoverAdapter`. Users with reversed/rotated gantry mounts should set these in `~/.config/emfi-control/config.json` and **restart Control** (read once at adapter connect):
+
+- `invert_x` / `invert_y` / `invert_z` — user's +axis → machine −axis (fixes "jog goes the wrong way").
+- `swap_xy` — user X drives machine Y and vice versa (stage mounted rotated 90°).
+
+Transform: invert user axes first, then swap onto machine axes; reads apply the exact inverse.
+
+**Why this matters for View:** the `position` WS topic and all `/motion/*` responses are now in the **user** coordinate frame. A gantry whose physical top-right is machine `(−10,−10)` now reports logical `(+10,+10)`, so the calibration wizard's `top_right` lands positive and the orchestrator's `top_right − origin` grid math no longer collapses to negative/zero. (Your client-side `abs()` + min/max-corner normalization is still good belt-and-suspenders for reverse-order corner marking — keep it.)
+
+**New endpoint:** `GET /config` → `{ axes, ports, safety }` (read-only) so View can display the current orientation. No POST yet — users edit the JSON by hand. No protocol/model changes, no WS topic/shape changes.
+
+Tests: `control/tests/test_chipshover.py` (16 cases — invert/swap/combined + logical↔machine round-trip). Suite: 76 passed, 2 deselected (hw). Docs in `control/SPEC.md` § "Axis configuration".

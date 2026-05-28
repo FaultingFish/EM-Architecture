@@ -52,6 +52,8 @@ GET    /devices                    list discovered serial devices
 POST   /devices/{name}/connect     open serial port
 POST   /devices/{name}/disconnect
 
+GET    /config                     axes + ports + safety config (read-only)
+
 POST   /motion/move_abs            { x, y, z } logical
 POST   /motion/move_rel            { axis, distance }
 POST   /motion/home
@@ -83,6 +85,39 @@ GET    /arm_state
 ```
 
 All responses use Pydantic models from `emfi_protocol`. Error responses use FastAPI's default `{ "detail": "..." }`.
+
+## Axis configuration
+
+Motion coordinates have two frames: **user logical** (what the API and the
+`position` WS topic report, and what the +X/+Y/+Z jog buttons mean) and
+**machine** (raw gantry G-code coordinates). `set_origin` records the
+current machine position as logical `(0,0,0)`; logical coordinates are
+offsets from it. On top of that offset, the `axes` section of
+`~/.config/emfi-control/config.json` corrects for a gantry mounted
+differently from the conventional rig:
+
+| Flag | Effect | Set it when… |
+|---|---|---|
+| `invert_x` | User +X → machine −X | Pressing +X jogs the stage the wrong way along X |
+| `invert_y` | User +Y → machine −Y | Pressing +Y jogs the stage the wrong way along Y |
+| `invert_z` | User +Z → machine −Z | +Z moves toward the bed instead of away |
+| `swap_xy` | User X drives machine Y and vice versa | The stage is mounted rotated 90° (X/Y transposed) |
+
+**Conventional setup** (all flags `false`): origin = bottom-left of the
+viewable DUT, +X = right, +Y = up, +Z = away from the bed. Rigs that don't
+match should set the flags above.
+
+Transform order (user → machine): invert the user axes first, then map to
+machine axes via the optional swap; reads apply the exact inverse. Because
+the inversion is applied before `position` is broadcast, the user never sees
+negative coordinates unless they intentionally jog into the negative region
+— e.g. a gantry whose physical top-right is machine `(−10, −10)` reports
+logical `(+10, +10)`, so the calibration wizard's `top_right` stays positive
+and the campaign grid math (`top_right − origin`) doesn't collapse.
+
+Changes take effect on Control restart (the config is read once at adapter
+connect). `GET /config` returns the live `axes` / `ports` / `safety`
+sections for display; there is no edit endpoint yet — edit the JSON file.
 
 ## WebSocket `/ws`
 

@@ -96,7 +96,13 @@ def build_context() -> AppContext:
     logbook = Logbook(default_log_dir())
     workers = WorkerRegistry()
 
-    shover = ChipShoverAdapter()
+    axes = config.get("axes", default={}) or {}
+    shover = ChipShoverAdapter(
+        invert_x=bool(axes.get("invert_x", False)),
+        invert_y=bool(axes.get("invert_y", False)),
+        invert_z=bool(axes.get("invert_z", False)),
+        swap_xy=bool(axes.get("swap_xy", False)),
+    )
     shouter = ChipShouterAdapter()
     scaffold = ScaffoldAdapter()
     xds110 = XDS110Adapter(

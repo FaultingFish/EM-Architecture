@@ -40,12 +40,16 @@ def _broadcast_position(ctx: AppContext) -> None:
 
 
 async def _refresh_position(ctx: AppContext) -> None:
-    """Read actual position from the adapter and update both machine and logical state."""
+    """Read actual position from the adapter and update both machine and logical state.
+
+    The logical position is derived from the machine reading via a pure
+    transform (origin offset + axis inversion/swap), so the WS ``position``
+    topic always reports the user's coordinate system — never the gantry's.
+    """
     worker = ctx.workers.get("chipshover")
     machine = await call_adapter(worker, ctx.shover.get_position)
     ctx.state.position_machine = machine
-    logical = ctx.shover.get_position_logical()
-    ctx.state.position_logical = logical
+    ctx.state.position_logical = ctx.shover.machine_to_logical(*machine)
 
 
 @router.post("/move_abs")
