@@ -254,6 +254,17 @@ def test_set_pulse_width_ns_converts_to_seconds():
     assert impl.pgen0.width == pytest.approx(80e-9)
 
 
+def test_get_pulse_width_ns_reads_back_nanoseconds():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    sa.set_pulse_width_ns(200.0)          # trigger constant
+    assert sa.get_pulse_width_ns() == pytest.approx(200.0)
+    # Direct register value (seconds) round-trips through the ns getter.
+    impl.pgen0.width = 150e-9
+    assert sa.get_pulse_width_ns() == pytest.approx(150.0)
+
+
 def test_pulse_timing_clamps_to_hardware_minimum():
     sa = ScaffoldAdapter()
     impl = _FakeImpl()

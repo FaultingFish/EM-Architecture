@@ -45,6 +45,9 @@ class FakeShouter:
         self.state_value = "ready"
         self.faults: List[Any] = []
         self.armed = False
+        self.pulse_widths: List[int] = []
+        # Simulate device quantization: report back this delta vs commanded.
+        self.width_readback_delta = 0
 
     def arm(self, clear_faults: bool = False) -> None:
         self.armed = True
@@ -54,6 +57,10 @@ class FakeShouter:
 
     def configure(self, **kwargs) -> None:
         pass
+
+    def set_pulse_width(self, pulse_width_ns: int) -> int:
+        self.pulse_widths.append(int(pulse_width_ns))
+        return int(pulse_width_ns) + self.width_readback_delta
 
     def pulse(self) -> None:
         self.pulses += 1
@@ -89,7 +96,11 @@ class FakeScaffold:
         self.pulse_delays_us.append(delay_us)
 
     def set_pulse_width_ns(self, width_ns: float) -> None:
+        # Now only called ONCE at campaign start (the A0 trigger constant).
         self.pulse_widths_ns.append(width_ns)
+
+    def get_pulse_width_ns(self) -> float:
+        return self.pulse_widths_ns[-1] if self.pulse_widths_ns else 200.0
 
     def arm_attempt(self) -> None:
         pass
@@ -511,8 +522,9 @@ async def test_run_campaign_broadcasts_position_and_attempt(tmp_path):
 
 @pytest.mark.asyncio
 async def test_one_shot_campaign_programs_pgen_and_skips_usb_pulse(tmp_path):
-    """In one-shot mode, the orchestrator programs pgen delay/width per attempt
-    and does NOT fire the ChipSHOUTER over USB (hardware A0 trigger does it)."""
+    """In one-shot mode the orchestrator: sets the pgen0 A0-trigger width ONCE
+    at campaign start, programs the pgen0 delay per attempt, sets the
+    ChipSHOUTER HV pulse width per attempt, and does NOT fire over USB."""
     bits = make_ctx(tmp_path)
     campaign = {
         "id": "hw-1", "name": "test", "project_id": "_test",
@@ -532,11 +544,41 @@ async def test_one_shot_campaign_programs_pgen_and_skips_usb_pulse(tmp_path):
     await bits["orch"].run_campaign(campaign)
     # Trigger mode wired once.
     assert bits["scaffold"].trigger_mode == "one-shot"
+    # pgen0 trigger width set ONCE at campaign start, to the fixed constant.
+    assert bits["scaffold"].pulse_widths_ns == [200.0]
     # Three delay values swept (1.0, 1.5, 2.0) → three pgen delay programmings.
     assert bits["scaffold"].pulse_delays_us == [1.0, 1.5, 2.0]
-    assert bits["scaffold"].pulse_widths_ns == [80.0, 80.0, 80.0]
+    # HV pulse width pushed to the ChipSHOUTER EVERY attempt (not swept here,
+    # so each is the campaign default 80 ns).
+    assert bits["shouter"].pulse_widths == [80, 80, 80]
     # No USB pulse in hardware mode.
     assert bits["shouter"].pulses == 0
+
+
+@pytest.mark.asyncio
+async def test_one_shot_campaign_logs_actual_pulse_width(tmp_path):
+    """shouter_pulse_width_ns_actual (device read-back) is propagated into each
+    logged AttemptResult, even when it differs from the commanded value."""
+    bits = make_ctx(tmp_path)
+    bits["shouter"].width_readback_delta = 3  # device quantizes 80 → 83
+    campaign = {
+        "id": "hw-actual", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (0.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 2},
+        "trigger_mode": "one-shot",
+        "shouter_voltage": 250, "shouter_pulse_width_ns": 80, "shouter_mute": True,
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+    }
+    await bits["orch"].run_campaign(campaign)
+    rows = bits["logbook"].read(limit=100)
+    assert len(rows) == 2
+    for r in rows:
+        assert r["shouter_pulse_width_ns"] == 80
+        assert r["shouter_pulse_width_ns_actual"] == 83
 
 
 @pytest.mark.asyncio

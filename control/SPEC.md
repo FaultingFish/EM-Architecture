@@ -39,8 +39,8 @@ JSON config under `~/.config/emfi-control/config.json` with hot reload. Schema m
 ### `adapters/`
 - `base.py` — common interface (`connect`, `disconnect`, `status`)
 - `chipshover.py` — wraps `chipshover` pip package; XY logical↔machine coordinate transform
-- `chipshouter.py` — wraps `chipshouter` pip package; idempotent arm/disarm, fault clearing
-- `scaffold.py` — wraps `donjon-scaffold`; D0/D1/D2/D3 pin map, trigger-mode selector
+- `chipshouter.py` — wraps `chipshouter` pip package; idempotent arm/disarm; captures `faults_latched` (decoded names + raw bitmask) into `last_fault` before clearing; `set_pulse_width(ns)` sets the **EMFI HV pulse width** (the parameter the campaign sweep's `pulse_width_ns` controls) and reads it back
+- `scaffold.py` — wraps `donjon-scaffold`; D0/D1/D2/D3 pin map, trigger-mode selector. In hardware trigger modes, `pgen0` provides only the **A0 trigger pulse**: its width is a fixed ~200 ns constant (set once at campaign start, not swept) and its delay is the per-attempt glitch delay
 - `xds110.py` — subprocess wrappers:
   - `flash(elf_path)` — invokes TI `dslite` or `uniflash` CLI; fast for the "build → flash → campaign" loop
   - `attach_debugger(elf_path)` — spawns OpenOCD on configured gdb/telnet ports for SW+HW combined attack analysis
@@ -49,6 +49,7 @@ JSON config under `~/.config/emfi-control/config.json` with hot reload. Schema m
 
 ```
 GET    /devices                    list discovered serial devices
+GET    /devices/chipshouter/faults last latched + current ChipSHOUTER faults
 POST   /devices/{name}/connect     open serial port
 POST   /devices/{name}/disconnect
 
@@ -136,8 +137,8 @@ Topics:
 - `position` — `{ x, y, z, machine_x, machine_y, machine_z }`
 - `arm` — `{ armed, seconds_until_auto_disarm }`
 - `counter` — Counters snapshot
-- `attempt` — `AttemptResult` (one per attempt completed)
-- `device_status` — per-device `DeviceStatus`
+- `attempt` — `AttemptResult` (one per attempt completed). Hardware-trigger campaigns also set `shouter_pulse_width_ns_actual` (the HV pulse width the ChipSHOUTER acknowledged, vs the commanded `shouter_pulse_width_ns`).
+- `device_status` — per-device `DeviceStatus`. For `chipshouter`, includes `fault_names: list[str] | null` (decoded names of the most recently latched faults).
 - `campaign_progress` — `{ campaign_id, phase, completed_attempts, total_attempts, current_xyz, current_sweep }`. `phase` is one of `started | running | completed | stopped | failed` (with an optional `reason` on `failed`). Field names mirror `emfi_protocol.CampaignStatus`. `current_xyz` is `[x, y, z]` while running, `null` otherwise.
 - `state` — full `AppState.snapshot()` on connect
 - `error` — `{ detail, campaign_id? }`

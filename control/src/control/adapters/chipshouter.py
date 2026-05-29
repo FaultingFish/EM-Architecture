@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional
 
 from control.adapters.base import BaseAdapter
 
@@ -42,12 +43,64 @@ except ImportError:  # library not installed in this env
         """Stand-in for chipshouter.com_tools.Reset_Exception when the lib
         is not installed (e.g. in test environments)."""
 
+# Bit position → fault name, mirroring chipshouter.com_tools.t_16_Bit_Options
+# (BIT_FAULT_*). The lib's faults_latched/faults_current already return decoded
+# name strings; this map lets us reconstruct a raw bitmask for logging when we
+# only have the name list. Kept inline (rather than imported) so the adapter
+# degrades gracefully if the lib isn't installed in a test env.
+_FAULT_BITS: Dict[str, int] = {
+    "fault_probe": 0,
+    "fault_overtemp": 1,
+    "fault_panel_open": 2,
+    "fault_high_voltage": 3,
+    "fault_ram_crc": 4,
+    "fault_eeprom_crc": 5,
+    "fault_gpio_error": 6,
+    "fault_ltfault_error": 7,
+    "fault_trigger_error": 8,
+    "fault_hardware_exc": 9,
+    "fault_trigger_glitch": 10,
+    "fault_overvoltage": 11,
+    "fault_temp_sensor": 12,
+}
+
 LOGGER = logging.getLogger(__name__)
 
 # Time to wait after a Reset_Exception before retrying. Per the lib's own
 # documented behavior: "wait 5 seconds then reinitialize."
 _RESET_RECOVERY_SLEEP = 5.0
 _RESET_RETRY_LIMIT = 2  # one initial try + one retry
+
+
+def _fault_names(raw: Any) -> List[str]:
+    """Normalize a faults_latched/faults_current value to a list of names.
+
+    The chipshouter lib returns a list of name strings (e.g.
+    ``['fault_high_voltage']``); older/edge cases may return dicts
+    (``[{'fault': 1, 'name': 'trigger'}]``) — handle both.
+    """
+    names: List[str] = []
+    if not raw:
+        return names
+    for item in raw:
+        if isinstance(item, dict):
+            if item.get("value") or item.get("fault"):
+                name = item.get("name")
+                if name:
+                    names.append(str(name))
+        else:
+            names.append(str(item))
+    return names
+
+
+def _fault_raw(names: List[str]) -> int:
+    """Reconstruct a raw bitmask from decoded fault names (for logging)."""
+    raw = 0
+    for n in names:
+        bit = _FAULT_BITS.get(n)
+        if bit is not None:
+            raw |= 1 << bit
+    return raw
 
 
 class ChipShouterAdapter(BaseAdapter):
@@ -57,6 +110,8 @@ class ChipShouterAdapter(BaseAdapter):
         self._impl = None
         self._port: Optional[str] = None
         self._last_error: Optional[str] = None
+        # Most recent latched-fault capture: {"ts", "names", "raw"} or None.
+        self.last_fault: Optional[Dict[str, Any]] = None
 
     def connect(self, port: Optional[str] = None) -> None:
         if port is None:
@@ -117,6 +172,56 @@ class ChipShouterAdapter(BaseAdapter):
             "Python instance may need to be re-created (disconnect/reconnect)."
         )
 
+    def _capture_faults(self) -> Optional[Dict[str, Any]]:
+        """Read latched faults into ``self.last_fault`` (does not clear).
+
+        Returns the capture dict (or None if nothing latched). Always call
+        this BEFORE clearing ``faults_current`` so the specific cause is
+        preserved for logging and View.
+        """
+        try:
+            latched = self._impl.faults_latched
+        except Exception as exc:
+            LOGGER.debug("could not read faults_latched: %s", exc)
+            return None
+        names = _fault_names(latched)
+        if not names:
+            return None
+        capture = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "names": names,
+            "raw": _fault_raw(names),
+        }
+        self.last_fault = capture
+        return capture
+
+    def _capture_and_clear_faults(self) -> None:
+        """Capture the latched fault cause, log it, then clear faults_current."""
+        capture = self._capture_faults()
+        if capture is not None:
+            LOGGER.warning(
+                "ChipSHOUTER fault tripped: %s (raw=0x%x); clearing",
+                ", ".join(capture["names"]), capture["raw"],
+            )
+        else:
+            LOGGER.warning("ChipSHOUTER in fault state (no latched detail); clearing")
+        self._impl.faults_current = 0
+
+    def get_faults(self) -> Dict[str, Any]:
+        """Return the last latched-fault capture, or the live current faults.
+
+        Shape: ``{"last_fault": {...}|None, "current": [names], "connected": bool}``.
+        Used by ``GET /devices/chipshouter/faults``.
+        """
+        if self._impl is None:
+            return {"last_fault": self.last_fault, "current": [], "connected": False}
+        try:
+            current = _fault_names(self._impl.faults_current)
+        except Exception as exc:
+            LOGGER.debug("could not read faults_current: %s", exc)
+            current = []
+        return {"last_fault": self.last_fault, "current": current, "connected": True}
+
     def configure(
         self,
         voltage: int,
@@ -140,6 +245,28 @@ class ChipShouterAdapter(BaseAdapter):
         LOGGER.info("ChipSHOUTER configured: V=%d width=%dns repeat=%d mute=%s",
                      voltage, pulse_width_ns, pulse_repeat, mute)
 
+    def set_pulse_width(self, pulse_width_ns: int) -> int:
+        """Set the HV pulse width (ns); return the value the device acknowledges.
+
+        This is the parameter that actually determines glitch energy — NOT the
+        Scaffold pgen0 trigger width. The device may quantize the request, so
+        we read it back and warn on mismatch.
+        """
+        self._require_connected()
+        target = int(pulse_width_ns)
+
+        def _do_set() -> int:
+            self._impl.pulse.width = target
+            return int(self._impl.pulse.width)
+
+        actual = self._with_reset_retry("set_pulse_width", _do_set)
+        if actual != target:
+            LOGGER.warning(
+                "ChipSHOUTER pulse width set %d ns, device reports %d ns",
+                target, actual,
+            )
+        return actual
+
     def arm(self, clear_faults: bool = False, timeout_s: float = 5.0) -> None:
         """Idempotent arm with timeout. No-op if already armed.
 
@@ -152,8 +279,9 @@ class ChipShouterAdapter(BaseAdapter):
             """Return True if armed (either already or after our request)."""
             state = str(self._impl.state).lower()
             if "fault" in state:
-                LOGGER.warning("ChipSHOUTER in fault state (%s), clearing", state)
-                self._impl.faults_current = 0
+                # Capture the specific latched cause BEFORE clearing, so the
+                # log/View show WHY (not just "fault").
+                self._capture_and_clear_faults()
                 time.sleep(0.1)
                 state = str(self._impl.state).lower()
             if "armed" in state:
@@ -216,7 +344,4 @@ class ChipShouterAdapter(BaseAdapter):
 
     def get_fault_active(self) -> List[Any]:
         self._require_connected()
-        faults = self._impl.faults_current
-        if faults:
-            return [str(faults)]
-        return []
+        return _fault_names(self._impl.faults_current)

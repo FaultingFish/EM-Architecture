@@ -50,6 +50,12 @@ class AttemptResult(BaseModel):
     pulse_width_ns: Optional[float] = None
     shouter_voltage: Optional[int] = None
     shouter_pulse_width_ns: Optional[int] = None
+    shouter_pulse_width_ns_actual: Optional[int] = Field(
+        None,
+        description="HV pulse width the ChipSHOUTER acknowledged (read-back); "
+        "may differ from the commanded shouter_pulse_width_ns due to device "
+        "quantization. None when not on a hardware-trigger campaign.",
+    )
 
     # Outcome
     outcome: Outcome

@@ -646,3 +646,28 @@ All `campaign_progress` WS broadcasts now emit **`completed_attempts`** and **`t
 **View:** update the heatmap component to read `counts.{glitch,hang,crash,nothing}` (color-code per cell); the response is non-empty as soon as any attempt exists.
 
 No `protocol/` model changes. Tests: 85 passed, 2 deselected (hw). Docs in `control/SPEC.md` (heatmap shape + campaign_progress topic).
+
+---
+
+## 2026-05-28 23:30 UTC  control  →  view, develop: [fyi] ChipSHOUTER fault detail + pulse-width semantics fix; two new optional fields
+
+Three campaign-start fixes from today's run. Two add optional protocol fields — additive/backward-compatible, but View should surface them.
+
+### Pulse-width semantics CORRECTED (important)
+Previously the sweep `pulse_width_ns` flowed into `scaffold.set_pulse_width_ns` → `pgen0.width`, i.e. the **A0 trigger high-time**, which has zero effect on glitch energy. Now:
+- The sweep **`pulse_width_ns` is the EMFI HV pulse width** → pushed to `ChipSHOUTER.pulse.width` **every attempt** (even when not swept, to catch mid-campaign drift), with read-back.
+- `pgen0.width` is a **fixed ~200 ns A0-trigger constant**, set once at campaign start (sanity-checked per attempt, warns on drift). No longer driven by the sweep.
+
+So any saved campaigns that "swept pulse width" but saw no effect will now actually vary glitch energy. View copy/tooltips that describe `pulse_width_ns` as the trigger width should be corrected to "EMFI HV pulse width".
+
+### `AttemptResult.shouter_pulse_width_ns_actual` (new, optional int)
+The HV pulse width the ChipSHOUTER acknowledged (read-back), which can differ from the commanded `shouter_pulse_width_ns` due to device quantization. `null` on software-trigger / non-hardware campaigns. Useful for correlating commanded-vs-real width in analysis. Logged per attempt and on the `attempt` WS topic.
+
+### `DeviceStatus.fault_names` (new, optional list[str])
+ChipSHOUTER faults were being cleared without ever reading `faults_latched`, so logs only said "fault" generically. Now the adapter captures the specific latched faults (decoded names like `fault_high_voltage`, `fault_trigger_error`, + a raw bitmask) into `last_fault` **before** clearing — including before the Reset_Exception-retry clear. Surfaced two ways:
+- `device_status` WS topic for chipshouter now includes `fault_names: list[str] | null`.
+- New endpoint **`GET /devices/chipshouter/faults`** → `{ last_fault: {ts, names, raw} | null, current: [names], connected: bool }`.
+
+View: show `fault_names` in the hardware status panel / a fault toast so the user sees *why* the SHOUTER faulted, not just that it did.
+
+No breaking changes: both new fields are optional with `None`/omitted defaults; existing consumers are unaffected. Control tests: 97 passed, 2 deselected (hw). Touched `control/` + `protocol/` only.

@@ -37,6 +37,13 @@ from control.workers import WorkerRegistry
 
 LOGGER = logging.getLogger(__name__)
 
+# Fixed A0 trigger high-time for hardware-trigger campaigns. Just long enough
+# for the ChipSHOUTER's external-trigger input to register a rising edge; the
+# actual glitch energy is set by the ChipSHOUTER's own pulse.width per attempt.
+# Set once at campaign start; sanity-checked per attempt.
+TRIGGER_WIDTH_NS = 200.0
+TRIGGER_WIDTH_DRIFT_NS = 50.0  # warn if pgen0 width drifts beyond this
+
 
 # --------------------------------------------------------------------------
 # Host script support
@@ -315,19 +322,36 @@ class Orchestrator:
             except Exception as exc:
                 LOGGER.debug("scaffold arm_attempt: %s", exc)
 
-        # In hardware-trigger modes, program the pulse generator for THIS
-        # attempt so the sweep can vary delay/width. The pgen then fires
-        # autonomously on the next D0 rising edge — no shouter.pulse() call.
+        # Per-attempt pulse programming.
+        #
+        # The sweep's pulse_width_ns is the EMFI HV pulse width → it goes to
+        # the ChipSHOUTER (set every attempt, even when not sweeping width, to
+        # catch any mid-campaign drift). The Scaffold pgen0 only provides the
+        # A0 trigger: its delay is the per-attempt glitch delay; its width is a
+        # fixed trigger constant set once at campaign start (sanity-checked
+        # below, never reprogrammed here).
+        shouter_pw_actual: Optional[int] = None
+        shouter_pw = pulse_params.get("pulse_width_ns") or pulse_params.get("shouter_pulse_width_ns")
+        shouter_pw = 80 if shouter_pw is None else int(shouter_pw)
+        if self.shouter.connected:
+            try:
+                shouter_pw_actual = await shouter_worker.call(
+                    self.shouter.set_pulse_width, shouter_pw)
+            except Exception as exc:
+                LOGGER.warning("ChipSHOUTER pulse width set failed: %s", exc)
+
         if trigger_mode in ("one-shot", "free-run") and self.scaffold.connected:
             delay_us = pulse_params.get("delay_us")
-            width_ns = pulse_params.get("pulse_width_ns")
             delay_us = 1.0 if delay_us is None else float(delay_us)
-            width_ns = 80.0 if width_ns is None else float(width_ns)
             try:
                 await scaffold_worker.call(self.scaffold.set_pulse_delay_us, delay_us)
-                await scaffold_worker.call(self.scaffold.set_pulse_width_ns, width_ns)
+                # Cheap sanity check: the trigger width should still be the
+                # campaign-start constant. Only log if it drifted.
+                pgen_w = await scaffold_worker.call(self.scaffold.get_pulse_width_ns)
+                if abs(pgen_w - TRIGGER_WIDTH_NS) > TRIGGER_WIDTH_DRIFT_NS:
+                    LOGGER.warning("pgen0 trigger width drifted: %.1f ns", pgen_w)
             except Exception as exc:
-                LOGGER.warning("pgen delay/width set failed: %s", exc)
+                LOGGER.warning("pgen delay set / width check failed: %s", exc)
 
         await asyncio.sleep(0.02)
 
@@ -408,7 +432,8 @@ class Orchestrator:
             "glitch_delay_us": pulse_params.get("delay_us") or pulse_params.get("glitch_delay_us"),
             "pulse_width_ns": pulse_params.get("pulse_width_ns"),
             "shouter_voltage": pulse_params.get("voltage_v") or pulse_params.get("shouter_voltage"),
-            "shouter_pulse_width_ns": pulse_params.get("shouter_pulse_width_ns"),
+            "shouter_pulse_width_ns": shouter_pw,
+            "shouter_pulse_width_ns_actual": shouter_pw_actual,
             "outcome": outcome,
             "verdict": verdict,
             "shouter_state": str(state_str) if state_str else None,
@@ -558,6 +583,17 @@ class Orchestrator:
                 await self._safe_disarm()
                 self.state.scan.active = False
                 return {"ok": False, "reason": f"trigger wiring failed: {exc}"}
+
+            # Hardware modes: fix the A0 trigger high-time once. The sweep's
+            # pulse_width_ns drives the ChipSHOUTER HV pulse (per attempt),
+            # NOT this trigger width.
+            if trigger_mode in ("one-shot", "free-run"):
+                try:
+                    await scaffold_worker.call(
+                        self.scaffold.set_pulse_width_ns, TRIGGER_WIDTH_NS)
+                    LOGGER.info("pgen0 trigger width fixed at %.0f ns", TRIGGER_WIDTH_NS)
+                except Exception as exc:
+                    LOGGER.warning("could not set pgen0 trigger width: %s", exc)
 
         # 3. Host script setup. Failure here aborts the whole campaign.
         try:

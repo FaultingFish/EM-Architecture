@@ -27,7 +27,7 @@ router = APIRouter(prefix="/devices", tags=["devices"])
 def _device_status(ctx: AppContext, name: str) -> Dict[str, Any]:
     adapter = ctx.adapter_for(name)
     ds = ctx.state.devices.get(name)
-    return {
+    status: Dict[str, Any] = {
         "name": name,
         "available": True,
         "connected": adapter.connected,
@@ -36,6 +36,10 @@ def _device_status(ctx: AppContext, name: str) -> Dict[str, Any]:
         "last_error": ds.last_error if ds else None,
         "busy": ctx.workers.get(name).busy if name != "xds110" else False,
     }
+    if name == "chipshouter":
+        last_fault = getattr(adapter, "last_fault", None)
+        status["fault_names"] = last_fault["names"] if last_fault else None
+    return status
 
 
 @router.get("")
@@ -45,6 +49,16 @@ def list_devices(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
     ports = list_ports(known)
     device_statuses = [_device_status(ctx, name) for name in DEVICE_NAMES]
     return {"ports": ports, "devices": device_statuses}
+
+
+@router.get("/chipshouter/faults")
+async def chipshouter_faults(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    """Return the ChipSHOUTER's last latched fault + live current faults.
+
+    Shape: ``{"last_fault": {"ts", "names", "raw"} | None,
+              "current": [names], "connected": bool}``.
+    """
+    return ctx.shouter.get_faults()
 
 
 @router.post("/{name}/connect")

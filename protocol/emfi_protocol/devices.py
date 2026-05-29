@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,11 @@ class DeviceStatus(BaseModel):
     label: Optional[str] = Field(None, description="Human-readable identifier")
     last_error: Optional[str] = None
     busy: bool = False
+    fault_names: Optional[List[str]] = Field(
+        None,
+        description="ChipSHOUTER: decoded names of the most recently latched "
+        "faults (e.g. fault_high_voltage). None when no device faults captured.",
+    )
 
 
 class ArmState(BaseModel):

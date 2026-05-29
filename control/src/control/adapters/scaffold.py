@@ -183,15 +183,25 @@ class ScaffoldAdapter(BaseAdapter):
         LOGGER.debug("pgen0 delay set to %.3f us", seconds * 1e6)
 
     def set_pulse_width_ns(self, width_ns: float) -> None:
-        """Set the pgen0 pulse width (A0 assertion duration), in nanoseconds.
+        """Set the pgen0 pulse width = the A0 *trigger* high-time, in ns.
 
-        Clamped to the hardware minimum (one clock tick).
+        This is only the duration the A0 line is held high to register a
+        rising edge at the ChipSHOUTER's external-trigger input — it does NOT
+        determine the EMFI HV pulse width (that's the ChipSHOUTER's own
+        ``pulse.width``). Set this once at campaign start to a fixed constant
+        (see CAMPAIGN_TRIGGER_WIDTH_NS); do not drive it from the sweep's
+        pulse_width_ns. Clamped to the hardware minimum (one clock tick).
         """
         self._require_connected()
         pgen = self._impl.pgen0
         seconds = max(float(width_ns) * 1e-9, pgen.width_min)
         pgen.width = seconds
-        LOGGER.debug("pgen0 width set to %.1f ns", seconds * 1e9)
+        LOGGER.debug("pgen0 trigger width set to %.1f ns", seconds * 1e9)
+
+    def get_pulse_width_ns(self) -> float:
+        """Read pgen0.width back as nanoseconds (the A0 trigger high-time)."""
+        self._require_connected()
+        return float(self._impl.pgen0.width) * 1e9
 
     def arm_attempt(self) -> None:
         """Prepare for the next verdict (reset pin-edge latches).

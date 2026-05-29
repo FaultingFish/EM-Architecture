@@ -7,12 +7,18 @@ a 5s sleep before giving up.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, List
 from unittest.mock import patch
 
 import pytest
 
-from control.adapters.chipshouter import ChipShouterAdapter, Reset_Exception
+from control.adapters.chipshouter import (
+    ChipShouterAdapter,
+    Reset_Exception,
+    _fault_names,
+    _fault_raw,
+)
 
 
 class _FakePulse:
@@ -112,3 +118,116 @@ def test_arm_succeeds_when_state_transitions():
     sa._impl = _FakeImpl(state_sequence=["ready", "armed"])
     sa.arm(timeout_s=1.0)
     assert sa._impl.armed is True
+
+
+# --- fault decode helpers -------------------------------------------------
+
+def test_fault_names_handles_string_list():
+    assert _fault_names(["fault_high_voltage", "fault_trigger_error"]) == [
+        "fault_high_voltage", "fault_trigger_error"
+    ]
+
+
+def test_fault_names_handles_dict_list():
+    raw = [{"fault": 1, "name": "fault_high_voltage"}, {"fault": 0, "name": "fault_probe"}]
+    # Only entries with a truthy fault/value are included.
+    assert _fault_names(raw) == ["fault_high_voltage"]
+
+
+def test_fault_names_empty():
+    assert _fault_names([]) == []
+    assert _fault_names(None) == []
+
+
+def test_fault_raw_reconstructs_bitmask():
+    # fault_high_voltage = bit 3 (0x8), fault_trigger_error = bit 8 (0x100).
+    assert _fault_raw(["fault_high_voltage"]) == 0x8
+    assert _fault_raw(["fault_high_voltage", "fault_trigger_error"]) == 0x108
+    # Unknown names are ignored.
+    assert _fault_raw(["bogus_fault"]) == 0
+
+
+# --- Bug 1: capture latched faults before clearing ------------------------
+
+def test_arm_captures_latched_faults_before_clearing():
+    """When the device is in fault state, arm() reads faults_latched into
+    self.last_fault BEFORE writing faults_current = 0."""
+    sa = ChipShouterAdapter()
+    impl = _FakeImpl(state_sequence=["fault", "armed"])
+    impl.faults_latched = ["fault_high_voltage", "fault_trigger_error"]
+    sa._impl = impl
+    with patch("control.adapters.chipshouter.time.sleep"):
+        sa.arm(timeout_s=1.0)
+
+    # Faults were cleared...
+    assert impl.faults_current == 0
+    # ...but the specific cause was captured first.
+    assert sa.last_fault is not None
+    assert sa.last_fault["names"] == ["fault_high_voltage", "fault_trigger_error"]
+    assert sa.last_fault["raw"] == 0x108
+    assert "ts" in sa.last_fault
+
+
+def test_capture_faults_returns_none_when_clean():
+    sa = ChipShouterAdapter()
+    impl = _FakeImpl()
+    impl.faults_latched = []
+    sa._impl = impl
+    assert sa._capture_faults() is None
+    assert sa.last_fault is None
+
+
+def test_get_faults_shape_connected():
+    sa = ChipShouterAdapter()
+    impl = _FakeImpl()
+    impl.faults_latched = []
+    impl.faults_current = ["fault_overtemp"]
+    sa._impl = impl
+    info = sa.get_faults()
+    assert info["connected"] is True
+    assert info["current"] == ["fault_overtemp"]
+    assert info["last_fault"] is None
+
+
+def test_get_faults_when_disconnected():
+    sa = ChipShouterAdapter()
+    info = sa.get_faults()
+    assert info == {"last_fault": None, "current": [], "connected": False}
+
+
+# --- Bug 2: HV pulse width set + read-back --------------------------------
+
+def test_set_pulse_width_returns_acknowledged_value():
+    sa = ChipShouterAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    actual = sa.set_pulse_width(80)
+    assert actual == 80
+    assert impl.pulse.width == 80
+
+
+def test_set_pulse_width_warns_on_quantization(caplog):
+    """If the device reports a different width than commanded, warn + return it."""
+    sa = ChipShouterAdapter()
+    impl = _FakeImpl()
+
+    class _QPulse:
+        def __init__(self) -> None:
+            self._w = 0
+            self.repeat = 1
+            self.deadtime = 0
+
+        @property
+        def width(self) -> int:
+            return self._w + 5  # device quantizes up by 5
+
+        @width.setter
+        def width(self, v: int) -> None:
+            self._w = int(v)
+
+    impl.pulse = _QPulse()
+    sa._impl = impl
+    with caplog.at_level(logging.WARNING, logger="control.adapters.chipshouter"):
+        actual = sa.set_pulse_width(80)
+    assert actual == 85
+    assert any("pulse width" in r.message for r in caplog.records)
