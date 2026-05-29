@@ -66,10 +66,27 @@ class XDS110Adapter(BaseAdapter):
     def flash(self, elf_path: Path) -> dict:
         """Flash the MSPM0L2228 via dslite.
 
-        UniFlash 9.x uses the subcommand form:
-            <dslite_bin> load --config=<ccxml> <elf_path>
-        (The older --mode=load syntax was rejected by UniFlash 9.4.1's
-        DSLite wrapper, which printed --help to stderr.)
+        UniFlash 9.4.1's ``dslite.sh`` wrapper UNCONDITIONALLY prepends
+        ``flash`` to whatever subcommand you pass — so calling::
+
+            dslite.sh load --config=… <elf>
+
+        ends up invoking ``DSLite flash load --config=… <elf>``, where the
+        inner ``DSLite flash`` subcommand treats ``load`` as a positional
+        flash-filename and dies with::
+
+            Failed: Unable to open file: load
+
+        The correct invocation is to pass NO subcommand at all and let the
+        wrapper fall through to its default 'flash' mode plus ``--run`` so
+        the target actually executes after loading (otherwise it sits
+        halted at the entry point and a subsequent power-cycle is needed
+        to start execution)::
+
+            dslite.sh --run --config=<ccxml> <elf>
+
+        That expands to ``DSLite flash --run --config=… <elf>`` which is
+        the documented form.
         """
         if not self.dslite_bin:
             raise RuntimeError(
@@ -87,7 +104,7 @@ class XDS110Adapter(BaseAdapter):
             raise RuntimeError(f"ELF file does not exist: {elf_path}")
         LOGGER.info("Flashing %s via dslite (ccxml=%s)", elf_path, ccxml_path)
 
-        cmd = [str(dslite), "load", f"--config={ccxml_path}", str(elf_path)]
+        cmd = [str(dslite), "--run", f"--config={ccxml_path}", str(elf_path)]
         start = time.monotonic()
         try:
             result = subprocess.run(
