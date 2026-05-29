@@ -41,7 +41,7 @@ LOGGER = logging.getLogger(__name__)
 # for the ChipSHOUTER's external-trigger input to register a rising edge; the
 # actual glitch energy is set by the ChipSHOUTER's own pulse.width per attempt.
 # Set once at campaign start; sanity-checked per attempt.
-TRIGGER_WIDTH_NS = 200.0
+TRIGGER_WIDTH_NS = 500.0
 TRIGGER_WIDTH_DRIFT_NS = 50.0  # warn if pgen0 width drifts beyond this
 
 
