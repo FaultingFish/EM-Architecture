@@ -4,6 +4,7 @@
   import CounterPanel from '$lib/components/CounterPanel.svelte';
   import LogTail from '$lib/components/LogTail.svelte';
   import ProgressBar from '$lib/components/ProgressBar.svelte';
+  import ScaffoldPowerCard from '$lib/components/ScaffoldPowerCard.svelte';
   import { positionStore } from '$lib/stores/position';
   import { activeCampaign } from '$lib/stores/campaign';
   import type { AttemptEntry } from '$lib/stores/log';
@@ -30,6 +31,11 @@
     <div class="panel">
       <h3>Manual Control</h3>
       <JogPad />
+    </div>
+
+    <div class="panel">
+      <h3>Scaffold Power</h3>
+      <ScaffoldPowerCard />
     </div>
 
     {#if $activeCampaign}

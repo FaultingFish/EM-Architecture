@@ -127,3 +127,18 @@ export async function shouterDisarm() {
 export async function listCampaigns() {
   return request('GET', '/campaigns');
 }
+
+export type ScaffoldRail = 'dut' | 'platform' | 'all';
+export interface ScaffoldPowerState { dut: boolean; platform: boolean; }
+
+export async function scaffoldPowerGet(): Promise<ScaffoldPowerState> {
+  return request('GET', '/devices/scaffold/power');
+}
+
+export async function scaffoldPowerSet(rail: ScaffoldRail, on: boolean): Promise<ScaffoldPowerState> {
+  return request('POST', '/devices/scaffold/power', { rail, on });
+}
+
+export async function scaffoldPowerCycle(rail: ScaffoldRail, off_time = 0.05): Promise<ScaffoldPowerState> {
+  return request('POST', '/devices/scaffold/power_cycle', { rail, off_time });
+}

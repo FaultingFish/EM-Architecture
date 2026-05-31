@@ -10,9 +10,17 @@ The ``@pytest.mark.hw`` test exercises the real Scaffold board.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
+import types
 from typing import Any, List, Tuple
 
 import pytest
+
+if importlib.util.find_spec("scaffold") is None:
+    scaffold = types.ModuleType("scaffold")
+    scaffold.Polarity = types.SimpleNamespace(HIGH_ON_PULSES="high_on_pulses")
+    sys.modules["scaffold"] = scaffold
 
 from control.adapters.scaffold import ScaffoldAdapter
 
@@ -72,6 +80,23 @@ class _FakePgen:
         self.width_min = 1e-8
 
 
+class _FakePower:
+    def __init__(self) -> None:
+        self.dut = 0
+        self.platform = 0
+        self.all_writes: List[int] = []
+
+    @property
+    def all(self) -> int:
+        return (1 if self.dut else 0) | (0b10 if self.platform else 0)
+
+    @all.setter
+    def all(self, value: int) -> None:
+        self.all_writes.append(value)
+        self.dut = 1 if value & 0b01 else 0
+        self.platform = 1 if value & 0b10 else 0
+
+
 class _FakeImpl:
     """Just enough donjon-scaffold surface for the adapter's methods."""
 
@@ -82,6 +107,7 @@ class _FakeImpl:
         self.d3 = _FakePin("d3")
         self.a0 = _FakePin("a0")
         self.pgen0 = _FakePgen()
+        self.power = _FakePower()
         self.sys_freq = 100e6
         self.version = "0.9"
         self.sig_connect_calls: List[Tuple[Any, Any]] = []
@@ -173,6 +199,54 @@ def test_unknown_pin_raises():
     sa._impl = _FakeImpl()
     with pytest.raises(ValueError, match="d99"):
         sa.set_d_output(99)
+
+
+def test_power_state_reads_dut_and_platform():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    impl.power.dut = 1
+    impl.power.platform = 0
+    sa._impl = impl
+    assert sa.power_state() == {"dut": True, "platform": False}
+
+
+def test_power_switches_are_independent():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    impl.power.platform = 1
+    sa._impl = impl
+
+    sa.dut_power(True)
+    assert impl.power.dut == 1
+    assert impl.power.platform == 1
+
+    sa.platform_power(False)
+    assert impl.power.dut == 1
+    assert impl.power.platform == 0
+
+
+def test_all_power_cycle_uses_combined_power_write(monkeypatch):
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    sa._impl = impl
+    monkeypatch.setattr("control.adapters.scaffold.time.sleep", lambda _seconds: None)
+
+    sa.all_power_cycle()
+
+    assert impl.power.all_writes == [0b00, 0b11]
+    assert sa.power_state() == {"dut": True, "platform": True}
+
+
+def test_disconnect_powers_off_both_rails():
+    sa = ScaffoldAdapter()
+    impl = _FakeImpl()
+    impl.power.all = 0b11
+    sa._impl = impl
+
+    sa.disconnect()
+
+    assert impl.power.dut == 0
+    assert impl.power.platform == 0
 
 
 # --------------------------------------------------------------------------

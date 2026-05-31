@@ -93,6 +93,7 @@ class ScaffoldAdapter(BaseAdapter):
                 LOGGER.debug("sig_disconnect_all: %s", exc)
             try:
                 self._impl.power.dut = 0
+                self._impl.power.platform = 0
             except Exception as exc:
                 LOGGER.debug("power off on disconnect: %s", exc)
             self._impl = None
@@ -248,6 +249,15 @@ class ScaffoldAdapter(BaseAdapter):
             "campaign_complete": campaign_complete,
         }
 
+    # ------------------------------------------------------------------
+    # Power rails. Scaffold exposes two independent 3.3 V supplies:
+    #   - DUT      (bit 0) — the MSPM0L2228 target socket
+    #   - Platform (bit 1) — auxiliary header for daughterboards, level
+    #                        shifters, external analog frontends, etc.
+    # The two are wired through separate FETs on the board, so toggling
+    # one never disturbs the other. Both are off by default at power-on.
+    # ------------------------------------------------------------------
+
     def dut_power_cycle(self, off_time: float = 0.05) -> None:
         """Power-cycle the DUT via Scaffold's power module."""
         self._require_connected()
@@ -261,6 +271,47 @@ class ScaffoldAdapter(BaseAdapter):
         self._require_connected()
         self._impl.power.dut = 1 if on else 0
         LOGGER.info("DUT power %s", "ON" if on else "OFF")
+
+    def platform_power_cycle(self, off_time: float = 0.05) -> None:
+        """Power-cycle the Platform rail (slot 2)."""
+        self._require_connected()
+        LOGGER.info("Platform power cycle (off_time=%.3fs)", off_time)
+        self._impl.power.platform = 0
+        time.sleep(off_time)
+        self._impl.power.platform = 1
+        time.sleep(0.05)
+
+    def platform_power(self, on: bool) -> None:
+        self._require_connected()
+        self._impl.power.platform = 1 if on else 0
+        LOGGER.info("Platform power %s", "ON" if on else "OFF")
+
+    def _set_all_power(self, value: int) -> None:
+        power = self._impl.power
+        try:
+            power.all = value
+            return
+        except AttributeError:
+            LOGGER.debug("Scaffold power.all is unavailable; writing rails separately")
+        power.dut = 1 if (value & 0b01) else 0
+        power.platform = 1 if (value & 0b10) else 0
+
+    def all_power_cycle(self, off_time: float = 0.05) -> None:
+        """Power-cycle DUT and Platform together."""
+        self._require_connected()
+        LOGGER.info("All-rails power cycle (off_time=%.3fs)", off_time)
+        self._set_all_power(0b00)
+        time.sleep(off_time)
+        self._set_all_power(0b11)
+        time.sleep(0.05)
+
+    def power_state(self) -> Dict[str, bool]:
+        """Snapshot both rails. Returns ``{"dut": bool, "platform": bool}``."""
+        self._require_connected()
+        return {
+            "dut": bool(self._impl.power.dut),
+            "platform": bool(self._impl.power.platform),
+        }
 
     # ------------------------------------------------------------------
     # Pin I/O surface used by per-project host/run.py scripts.

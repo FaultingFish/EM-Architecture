@@ -6,6 +6,7 @@ import { countersStore } from '../stores/counters';
 import { devicesStore, type DeviceStatus } from '../stores/devices';
 import { logStore } from '../stores/log';
 import { positionStore } from '../stores/position';
+import { scaffoldPowerStore } from '../stores/scaffold_power';
 import { toasts } from '../stores/toast';
 
 const log = createLogger('control-ws');
@@ -49,6 +50,13 @@ export function connect(): WebSocket {
       return;
     }
     switch (msg.topic) {
+      case 'state': {
+        const devices = msg.payload?.devices;
+        if (devices && typeof devices === 'object') {
+          devicesStore.set(new Map(Object.entries(devices) as [string, DeviceStatus][]));
+        }
+        break;
+      }
       case 'position': positionStore.set(msg.payload); break;
       case 'arm':
         log.info('arm state changed', msg.payload);
@@ -58,6 +66,10 @@ export function connect(): WebSocket {
       case 'attempt':
         log.debug(`attempt outcome=${msg.payload?.outcome}`);
         logStore.update((l) => [...l.slice(-199), msg.payload]);
+        break;
+      case 'scaffold_power':
+        log.info('scaffold power changed', msg.payload);
+        scaffoldPowerStore.set(msg.payload);
         break;
       case 'device_status':
         log.info(`device ${msg.payload?.name} status changed`, msg.payload);
