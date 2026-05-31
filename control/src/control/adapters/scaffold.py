@@ -32,6 +32,7 @@ Hardware-trigger implementation (donjon-scaffold 0.9.5, introspected):
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Dict, Optional
 
@@ -66,23 +67,42 @@ class ScaffoldAdapter(BaseAdapter):
             raise ValueError("scaffold: no serial port specified")
         try:
             from scaffold import Scaffold
+            from scaffold import bus as scaffold_bus
         except ImportError as exc:
             self._last_error = f"donjon-scaffold library not installed: {exc}"
             raise RuntimeError(self._last_error) from exc
 
         LOGGER.info("Scaffold connecting on %s", port)
-        self._impl = Scaffold(port)
-        self._port = port
-        self._version = str(self._impl.version)
-        # Cache the system clock so delay/width conversions and logs are
-        # correct even if a future board reports a non-100 MHz frequency.
-        self._sys_freq = float(getattr(self._impl, "sys_freq", 100e6))
-        self.CLOCK_MHZ = self._sys_freq / 1e6
-        self._last_error = None
-        LOGGER.info(
-            "Scaffold connected — firmware %s, clock %.0f MHz",
-            self._version, self.CLOCK_MHZ,
-        )
+        serial_cls = scaffold_bus.serial.Serial
+        timeout_s = float(os.environ.get("SCAFFOLD_SERIAL_TIMEOUT_S", "2.0"))
+
+        def serial_with_timeout(*args: Any, **kwargs: Any) -> Any:
+            kwargs.setdefault("timeout", timeout_s)
+            kwargs.setdefault("write_timeout", timeout_s)
+            return serial_cls(*args, **kwargs)
+
+        scaffold_bus.serial.Serial = serial_with_timeout
+        try:
+            self._impl = Scaffold(port)
+            self._port = port
+            self._version = str(self._impl.version)
+            # Cache the system clock so delay/width conversions and logs are
+            # correct even if a future board reports a non-100 MHz frequency.
+            self._sys_freq = float(getattr(self._impl, "sys_freq", 100e6))
+            self.CLOCK_MHZ = self._sys_freq / 1e6
+            self._last_error = None
+            LOGGER.info(
+                "Scaffold connected — firmware %s, clock %.0f MHz",
+                self._version, self.CLOCK_MHZ,
+            )
+        except Exception as exc:
+            self._impl = None
+            self._port = None
+            self._version = None
+            self._last_error = f"Scaffold connect failed on {port}: {exc}"
+            raise RuntimeError(self._last_error) from exc
+        finally:
+            scaffold_bus.serial.Serial = serial_cls
 
     def disconnect(self) -> None:
         if self._impl is not None:
