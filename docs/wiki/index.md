@@ -15,6 +15,8 @@ reading the whole repo.
 | [`../automation.md`](../automation.md) | Scoped API access for scripts and AI agents |
 | [`operator-workflow.md`](./operator-workflow.md) | Day-to-day campaign workflow |
 | [`developer-workflow.md`](./developer-workflow.md) | Code, test, push, pull, and deploy loop |
+| [`dual-target-campaigns.md`](./dual-target-campaigns.md) | DUT EMFI plus Platform voltage-glitch campaign model |
+| [`purple-board-pinout.md`](./purple-board-pinout.md) | Current purple board pinout, Scaffold wiring, and bench-verification gaps |
 
 ## Wiki conventions
 
@@ -26,8 +28,6 @@ reading the whole repo.
 
 ## Open wiki pages to add
 
-- Board pinout and wiring for the current purple board target.
-- Dual-target EMFI plus voltage-glitching experiment flow.
 - ChipWhisperer Husky setup and crowbar wiring.
 - XDS110 flash/debug troubleshooting.
 - Campaign analysis recipes.

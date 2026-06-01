@@ -23,19 +23,20 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 
 - [x] **Calibration wizard** — 3-step UI flow: origin → top-right → confirm with 3D preview. **(view)**
 - [x] **Hardware status panel** — always-visible header strip with device states + ChipSHOUTER voltage/faults. **(view)**
-- [ ] **Pre-flight checklist** — campaign-start gate verifying all devices connected, firmware flashed matches build_sha, voltage in safety bounds, ARM gate behavior. **(control endpoint + view UI)**
+- [x] **Pre-flight checklist** — campaign-start gate verifying all devices connected, firmware flashed matches build_sha, voltage in safety bounds, ARM gate behavior. **(control endpoint + view UI)**
   - [x] control: preflight endpoint for device, voltage, ARM-state, grid, and pulse-budget checks
   - [x] view: pre-submit grid/sweep estimate + small-grid warning on campaign form; calibration wizard blocks `top_right == origin`
-  - [ ] control: verify flashed firmware/build provenance against `build_sha`
+  - [x] control: verify flashed firmware/build provenance against `build_sha`
 - [x] **Time + cost estimator** — display total pulse count + ETA on the campaign config form before submit. **(view, reads stats from existing endpoints)**
 - [x] **Campaign presets** — save/reload named campaign configurations per project. **(develop storage + view picker)**
   - [x] develop: storage + REST endpoints
   - [x] view: picker on campaign config form
 - [ ] **GlitchTarget range** — `pc_end` field so a single target spans an instruction range; campaign sweeps delay across the range. **(develop protocol + view picker)**
   - [x] develop: protocol fields + storage round-trip
-  - [ ] view: range-select in AssemblyView
+  - [x] view: range-select in AssemblyView
+  - [ ] control: use target-range delay metadata when materializing campaign delay sweeps
 - [x] **Hardware-triggered pulse via Scaffold pgen** — D0 rising edge → pgen0 (programmable delay) → A0 ChipSHOUTER trigger, all in hardware (zero USB jitter). `trigger_mode="one-shot"` wires `d0 → pgen0.start`, `pgen0.out → a0`; sweep delay/width set per attempt via `pgen0.delay`/`pgen0.width`. **(control)**
-- [ ] **Stop conditions** — "stop after N glitches", "stop on first crash", "stop after X minutes". **(control orchestrator + view UI)**
+- [x] **Stop conditions** — "stop after N glitches", "stop on first crash", "stop after X minutes". **(control orchestrator + view UI)**
 - [ ] **Heatmap drill-down** — click a hot cell → see the attempts that produced glitches, with delay/voltage/pulse-width/target-PC for each. **(view, reads existing /runs)**
 - [ ] **Heatmap parameter histogram** — `(delay_us, pulse_width_ns)` joint distribution for cells with ≥N glitches; finds sweet spots. **(view)**
 - [ ] **Campaign notes + tags** — free-text + tag per campaign; filter in the runs browser. **(control storage + view UI)**
@@ -58,7 +59,8 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 - [x] **Application auth middleware** — add scoped bearer-token auth on top of Cloudflare Access service tokens. **(control + develop)**
 - [ ] **Automation preflight endpoint** — validate devices, rails, build provenance, grid bounds, pulse budget, and safety limits before agent-launched campaigns. **(control + view)**
   - [x] initial endpoint + view gate for device, rail, grid, pulse-budget, and safety checks
-  - [ ] flashed-firmware provenance and stop-condition policy checks
+  - [x] flashed-firmware provenance and stop-condition schema checks
+  - [ ] durable flashed provenance across Control restarts
 - [x] **Audit log for dangerous actions** — append operator/agent identity and request metadata for arm, pulse, motion, power, flash, and campaign start/stop. **(control)**
 - [ ] **Dual-target campaign model** — represent DUT EMFI plus platform voltage-glitch timing explicitly for ChipWhisperer Husky/crowbar experiments. **(protocol + control + view)**
 

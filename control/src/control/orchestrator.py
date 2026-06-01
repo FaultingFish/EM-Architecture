@@ -492,6 +492,21 @@ class Orchestrator:
         trigger_mode = c.get("trigger_mode", "software")
         auto_arm = bool(c.get("shouter_auto_arm", True))
         verdict_timeout_s = float(c.get("verdict_timeout_ms", 500)) / 1000.0
+        stop_conditions = c.get("stop_conditions") or {}
+        max_glitches = c.get("max_glitches")
+        if max_glitches is None:
+            max_glitches = stop_conditions.get("max_glitches")
+        max_glitches = int(max_glitches) if max_glitches is not None else None
+        stop_on_first_crash = bool(
+            c.get("stop_on_first_crash", False)
+            or stop_conditions.get("stop_on_first_crash", False)
+        )
+        max_runtime_seconds = c.get("max_runtime_seconds")
+        if max_runtime_seconds is None:
+            max_runtime_seconds = stop_conditions.get("max_runtime_seconds")
+        max_runtime_seconds = (
+            float(max_runtime_seconds) if max_runtime_seconds is not None else None
+        )
 
         grid = c["grid"]
         sweep = c["sweep"]
@@ -629,7 +644,28 @@ class Orchestrator:
         })
 
         completed = 0
+        campaign_glitches = 0
         host_script_errors = 0
+        stop_reason: Optional[str] = None
+        run_started_at = time.monotonic()
+
+        def request_policy_stop(reason: str) -> None:
+            nonlocal stop_reason
+            if stop_reason is None:
+                stop_reason = reason
+                LOGGER.info("Campaign %s stop policy reached: %s", campaign_id, reason)
+            self.stop_flag.set()
+
+        def runtime_limit_reached() -> bool:
+            if max_runtime_seconds is None:
+                return False
+            if time.monotonic() - run_started_at < max_runtime_seconds:
+                return False
+            request_policy_stop(
+                f"max_runtime_seconds reached ({max_runtime_seconds:g}s)"
+            )
+            return True
+
         try:
             for (x, y, z, xi, yi, zi) in grid_pts:
                 if self.stop_flag.is_set():
@@ -687,6 +723,8 @@ class Orchestrator:
                             for _ in range(attempts_per_point):
                                 if self.stop_flag.is_set():
                                     break
+                                if runtime_limit_reached():
+                                    break
                                 try:
                                     res = await self.perform_attempt(
                                         verdict_timeout_s=verdict_timeout_s,
@@ -708,6 +746,9 @@ class Orchestrator:
                                     # campaigns as "completed".
                                     if res.get("entry", {}).get("error"):
                                         host_script_errors += 1
+                                    outcome = res.get("outcome")
+                                    if outcome == "glitch":
+                                        campaign_glitches += 1
                                     self.state.scan.completed = completed
                                     if status is not None:
                                         status.completed_attempts = completed
@@ -725,6 +766,17 @@ class Orchestrator:
                                             "voltage_v": voltage_v,
                                         },
                                     })
+                                    if (
+                                        max_glitches is not None
+                                        and campaign_glitches >= max_glitches
+                                    ):
+                                        request_policy_stop(
+                                            f"max_glitches reached ({campaign_glitches}/{max_glitches})"
+                                        )
+                                        break
+                                    if stop_on_first_crash and outcome == "crash":
+                                        request_policy_stop("stop_on_first_crash reached")
+                                        break
                                 except Disarmed as exc:
                                     LOGGER.warning("Campaign %s disarmed: %s", campaign_id, exc)
                                     self.broadcast("error", {
@@ -759,7 +811,7 @@ class Orchestrator:
 
             if self.stop_flag.is_set():
                 phase = "stopped"
-                reason: Optional[str] = None
+                reason = stop_reason
             elif completed > 0 and host_script_errors == completed:
                 phase = "failed"
                 reason = (

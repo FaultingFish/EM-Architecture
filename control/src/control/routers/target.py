@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends
+from emfi_protocol.projects import FlashedFirmware
 from pydantic import BaseModel
 
 from control.deps import AppContext, call_adapter, call_subprocess_adapter, get_ctx
@@ -23,6 +25,8 @@ router = APIRouter(prefix="/target", tags=["target"])
 class FlashRequest(BaseModel):
     build_sha: str
     elf_url: str
+    project_id: Optional[str] = None
+    project_version: Optional[str] = None
 
 
 class DebugAttachRequest(BaseModel):
@@ -49,6 +53,14 @@ async def flash(req: FlashRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
     elf_path = await _resolve_elf(req.elf_url)
 
     result = await call_subprocess_adapter(ctx.xds110.flash, elf_path)
+    ctx.flashed_firmware = FlashedFirmware(
+        build_sha=req.build_sha,
+        elf_url=req.elf_url,
+        project_id=req.project_id,
+        project_version=req.project_version,
+        flashed_at=datetime.now(timezone.utc),
+        flash_result=result if isinstance(result, dict) else {"result": result},
+    )
 
     ctx.broadcast("device_status", {"name": "xds110", "connected": True})
     LOGGER.info("Flash complete: build_sha=%s result=%s", req.build_sha, result)

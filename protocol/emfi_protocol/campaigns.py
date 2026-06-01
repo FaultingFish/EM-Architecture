@@ -39,6 +39,25 @@ class SweepParams(BaseModel):
     attempts_per_point: int = Field(1, ge=1)
 
 
+class StopConditions(BaseModel):
+    """Optional policies that stop an otherwise valid campaign early."""
+
+    max_glitches: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Stop the campaign after this many glitch outcomes",
+    )
+    stop_on_first_crash: bool = Field(
+        False,
+        description="Stop the campaign after the first crash outcome",
+    )
+    max_runtime_seconds: Optional[float] = Field(
+        None,
+        gt=0,
+        description="Stop the campaign once wall-clock runtime reaches this many seconds",
+    )
+
+
 class Campaign(BaseModel):
     """A user-defined glitch campaign."""
 
@@ -63,6 +82,27 @@ class Campaign(BaseModel):
     shouter_auto_arm: bool = True
 
     verdict_timeout_ms: int = 500
+
+    # Optional unattended-run stop policies. Defaults preserve historical
+    # behavior: run the full grid/sweep unless a manual stop is requested.
+    stop_conditions: Optional[StopConditions] = Field(
+        None,
+        description="Grouped stop policy fields used by View and automation clients",
+    )
+    max_glitches: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Legacy top-level alias for stop_conditions.max_glitches",
+    )
+    stop_on_first_crash: bool = Field(
+        False,
+        description="Legacy top-level alias for stop_conditions.stop_on_first_crash",
+    )
+    max_runtime_seconds: Optional[float] = Field(
+        None,
+        gt=0,
+        description="Legacy top-level alias for stop_conditions.max_runtime_seconds",
+    )
 
 
 class CampaignStatus(BaseModel):

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import HTTPException, Request
-
+from emfi_protocol.projects import FlashedFirmware
 from control.adapters.chipshouter import ChipShouterAdapter
 from control.adapters.chipshover import ChipShoverAdapter
 from control.adapters.scaffold import ScaffoldAdapter
@@ -56,6 +56,7 @@ class AppContext:
     xds110: XDS110Adapter
     orchestrator: Orchestrator
     loop: Optional[asyncio.AbstractEventLoop] = None
+    flashed_firmware: Optional[FlashedFirmware] = None
     campaigns: Dict[str, Any] = field(default_factory=dict)
 
     def adapter_for(self, name: str) -> Any:

@@ -136,6 +136,24 @@ Avoid direct calls to raw hardware endpoints such as `/shouter/pulse`,
 `/motion/move_abs`, and Scaffold power routes from autonomous agents. Those
 should remain manual/operator or policy-gated endpoints.
 
+Campaign requests may include optional stop policies under `stop_conditions`:
+
+```json
+{
+  "stop_conditions": {
+    "max_glitches": 5,
+    "stop_on_first_crash": true,
+    "max_runtime_seconds": 1800
+  }
+}
+```
+
+Control validates these fields at request parse time and enforces them between
+attempts. For build provenance, include `build_sha` and pass `project_id` /
+`project_version` on `POST /api/control/target/flash` when available. Control
+records the last successful DUT flash in memory and blocks campaign start when
+a pinned campaign build does not match the recorded flashed build.
+
 ## Audit trail
 
 Control appends dangerous actions to daily JSONL files under
@@ -233,8 +251,10 @@ curl -fsS -X POST "$EMFI_ORIGIN/api/control/campaigns/$CAMPAIGN_ID/stop" \
 
 - Keep bearer-token middleware enabled on remote deployments and add focused
   tests for malformed config, missing bearer, invalid token, and missing scope.
-- Harden `POST /campaigns/preflight` to cover firmware provenance, stop
-  conditions, and all campaign budget limits without touching hardware.
+- Persist flashed firmware provenance across Control restarts so preflight can
+  verify `build_sha` after service reloads.
+- Harden `POST /campaigns/preflight` to cover all campaign budget limits
+  without touching hardware.
 - Add campaign budgets: max attempts, max runtime, max voltage, max pulse rate,
   allowed trigger modes, allowed rails.
 - Add required campaign metadata: operator/agent id, objective, target board,

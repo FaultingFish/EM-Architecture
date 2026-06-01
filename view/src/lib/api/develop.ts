@@ -3,11 +3,16 @@ import { DEVELOP_URL } from '../config';
 
 const log = createLogger('develop-api');
 
-async function request(method: string, path: string) {
+async function request(method: string, path: string, body?: unknown) {
   const url = `${DEVELOP_URL}${path}`;
   log.info(`${method} ${path}`);
   try {
-    const r = await fetch(url, { method });
+    const opts: RequestInit = { method };
+    if (body !== undefined) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(url, opts);
     if (!r.ok) {
       const text = await r.text().catch(() => '');
       log.error(`${method} ${path} => ${r.status}`, text);
@@ -42,6 +47,24 @@ export async function disassembly(id: string, sha: string) {
 
 export async function listTargets(id: string) {
   return request('GET', `/projects/${id}/targets`);
+}
+
+export interface GlitchTargetInput {
+  pc_address: number;
+  pc_end?: number | null;
+  name: string;
+  expected_delay_cycles?: number | null;
+  expected_delay_cycles_end?: number | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+export async function addTarget(id: string, target: GlitchTargetInput) {
+  return request('POST', `/projects/${id}/targets`, target);
+}
+
+export async function removeTarget(id: string, pcAddress: number) {
+  return request('DELETE', `/projects/${id}/targets/${pcAddress}`);
 }
 
 export async function listPresets(id: string) {

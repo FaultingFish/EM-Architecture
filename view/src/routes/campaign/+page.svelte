@@ -37,6 +37,9 @@
   let verdictTimeout = 500;
   let shouterMute = true;
   let shouterAutoArm = true;
+  let stopMaxGlitches: number | null = null;
+  let stopOnFirstCrash = false;
+  let stopMaxRuntimeMinutes: number | null = null;
 
   let sweep = {
     delay_us: null as { start: number; stop: number; step: number } | null,
@@ -176,12 +179,37 @@
     verdictTimeout = Number(config.verdict_timeout_ms ?? verdictTimeout);
     shouterMute = Boolean(config.shouter_mute ?? shouterMute);
     shouterAutoArm = Boolean(config.shouter_auto_arm ?? shouterAutoArm);
+    const stops = config.stop_conditions ?? config;
+    stopMaxGlitches =
+      stops.max_glitches == null ? null : Math.max(1, Math.trunc(Number(stops.max_glitches)));
+    stopOnFirstCrash = Boolean(stops.stop_on_first_crash ?? false);
+    const maxRuntimeSeconds = stops.max_runtime_seconds ?? stops.max_runtime_s;
+    stopMaxRuntimeMinutes =
+      maxRuntimeSeconds == null ? null : Math.max(1, Math.ceil(Number(maxRuntimeSeconds) / 60));
     gridAck = false;
     preflightState = 'idle';
     preflightMessage = 'Preset loaded. Run preflight before start.';
     preflightChecks = [];
     lastPreflightKey = '';
     toasts.info(`Loaded preset ${preset.name}`);
+  }
+
+  function optionalPositiveInt(value: number | null): number | null {
+    if (value == null || value === 0 || value === undefined) return null;
+    const parsed = Math.trunc(Number(value));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  function buildStopConditions(): Record<string, unknown> | null {
+    const conditions: Record<string, unknown> = {};
+    const maxGlitches = optionalPositiveInt(stopMaxGlitches);
+    const maxRuntimeMinutes = optionalPositiveInt(stopMaxRuntimeMinutes);
+
+    if (maxGlitches !== null) conditions.max_glitches = maxGlitches;
+    if (stopOnFirstCrash) conditions.stop_on_first_crash = true;
+    if (maxRuntimeMinutes !== null) conditions.max_runtime_seconds = maxRuntimeMinutes * 60;
+
+    return Object.keys(conditions).length > 0 ? conditions : null;
   }
 
   function buildBody(): Record<string, unknown> {
@@ -209,6 +237,8 @@
       shouter_mute: shouterMute,
       shouter_auto_arm: shouterAutoArm,
     };
+    const stopConditions = buildStopConditions();
+    if (stopConditions) body.stop_conditions = stopConditions;
     if (selectedVersion) body.project_version = selectedVersion;
     return body;
   }
@@ -541,6 +571,31 @@
           <label><input type="checkbox" bind:checked={shouterMute} /> Mute buzzer</label>
           <label><input type="checkbox" bind:checked={shouterAutoArm} /> Auto-arm</label>
         </div>
+        <div class="stop-grid">
+          <div class="field">
+            <label for="camp-stop-glitches">Max glitches</label>
+            <input
+              id="camp-stop-glitches"
+              type="number"
+              bind:value={stopMaxGlitches}
+              min="1"
+              placeholder="unlimited"
+            />
+          </div>
+          <div class="field">
+            <label for="camp-stop-runtime">Max runtime (min)</label>
+            <input
+              id="camp-stop-runtime"
+              type="number"
+              bind:value={stopMaxRuntimeMinutes}
+              min="1"
+              placeholder="unlimited"
+            />
+          </div>
+        </div>
+        <div class="field row">
+          <label><input type="checkbox" bind:checked={stopOnFirstCrash} /> Stop on first crash</label>
+        </div>
       </details>
 
       <details class="panel" bind:open={showPreview}>
@@ -568,6 +623,7 @@
   .field { display: flex; flex-direction: column; gap: 0.2rem; margin-bottom: 0.4rem; }
   .field input[type="text"], .field input[type="number"], .field select { width: 100%; }
   .field.row { flex-direction: row; gap: 1rem; }
+  .stop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
 
   details.panel { cursor: default; }
   details.panel summary {

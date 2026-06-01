@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
-from emfi_protocol.campaigns import Campaign, GridParams, SweepParams, SweepRange
+import pytest
+from fastapi import HTTPException
 
-from control.routers.campaigns import _preflight
+from emfi_protocol.campaigns import Campaign, GridParams, SweepParams, SweepRange
+from emfi_protocol.projects import FlashedFirmware
+
+from control.routers.campaigns import _preflight, start
 from control.state import AppState, DeviceStatus
 
 
@@ -26,6 +30,7 @@ class _Context:
     state: AppState
     config: _Config = field(default_factory=_Config)
     campaigns: dict[str, Any] = field(default_factory=dict)
+    flashed_firmware: FlashedFirmware | None = None
 
 
 def _campaign(**overrides) -> Campaign:
@@ -101,3 +106,62 @@ def test_preflight_warns_when_not_armed_or_pinned():
     assert result.ok is True
     assert any("not armed" in w for w in result.warnings)
     assert any("no pinned build_sha" in w for w in result.warnings)
+
+
+def test_preflight_warns_when_pinned_build_has_no_flash_record():
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    result = _preflight(_campaign(build_sha="abc123"), ctx)
+
+    assert result.ok is True
+    assert any("no successful DUT flash recorded" in w for w in result.warnings)
+
+
+def test_preflight_blocks_flashed_build_mismatch():
+    ctx = _Context(
+        _state("chipshover", "chipshouter", "scaffold", "xds110"),
+        flashed_firmware=FlashedFirmware(
+            build_sha="flashed456",
+            project_id="purpleboardtest",
+            flashed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    result = _preflight(_campaign(build_sha="abc123"), ctx)
+
+    assert result.ok is False
+    assert any("does not match flashed DUT build flashed456" in b for b in result.blockers)
+
+
+def test_preflight_blocks_flashed_project_mismatch_when_recorded():
+    ctx = _Context(
+        _state("chipshover", "chipshouter", "scaffold", "xds110"),
+        flashed_firmware=FlashedFirmware(
+            build_sha="abc123",
+            project_id="other-project",
+            flashed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    result = _preflight(_campaign(project_id="purpleboardtest", build_sha="abc123"), ctx)
+
+    assert result.ok is False
+    assert any("does not match flashed DUT project other-project" in b for b in result.blockers)
+
+
+@pytest.mark.asyncio
+async def test_campaign_start_blocks_flashed_build_mismatch():
+    ctx = _Context(
+        _state("chipshover", "chipshouter", "scaffold", "xds110"),
+        flashed_firmware=FlashedFirmware(
+            build_sha="flashed456",
+            project_id="purpleboardtest",
+            flashed_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await start(_campaign(build_sha="abc123"), ctx)
+
+    assert exc.value.status_code == 409
+    assert any("does not match flashed DUT build" in b for b in exc.value.detail["blockers"])

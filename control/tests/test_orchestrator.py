@@ -495,6 +495,123 @@ async def test_run_campaign_stops_promptly_on_stop_flag(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_campaign_stops_at_max_glitches(tmp_path):
+    bits = make_ctx(tmp_path)
+    bits["scaffold"].next_verdict = {
+        "fault": True,
+        "heartbeat_alive": True,
+        "campaign_complete": False,
+    }
+    campaign = {
+        "id": "stop-glitches", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (10.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 3},
+        "trigger_mode": "software",
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+        "max_glitches": 2,
+    }
+
+    result = await bits["orch"].run_campaign(campaign)
+
+    assert result["completed"] == 2
+    progress = [b[1] for b in bits["broadcasts"] if b[0] == "campaign_progress"]
+    stopped = [p for p in progress if p.get("phase") == "stopped"]
+    assert stopped
+    assert "max_glitches reached" in stopped[-1]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_run_campaign_accepts_nested_stop_conditions(tmp_path):
+    bits = make_ctx(tmp_path)
+    bits["scaffold"].next_verdict = {
+        "fault": True,
+        "heartbeat_alive": True,
+        "campaign_complete": False,
+    }
+    campaign = {
+        "id": "stop-glitches-nested", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (10.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 3},
+        "trigger_mode": "software",
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+        "stop_conditions": {"max_glitches": 1},
+    }
+
+    result = await bits["orch"].run_campaign(campaign)
+
+    assert result["completed"] == 1
+    progress = [b[1] for b in bits["broadcasts"] if b[0] == "campaign_progress"]
+    stopped = [p for p in progress if p.get("phase") == "stopped"]
+    assert stopped
+    assert "max_glitches reached" in stopped[-1]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_run_campaign_stops_on_first_crash(tmp_path):
+    bits = make_ctx(tmp_path)
+    bits["shouter"].state_value = "fault"
+    campaign = {
+        "id": "stop-crash", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (10.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 3},
+        "trigger_mode": "software",
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+        "stop_on_first_crash": True,
+    }
+
+    result = await bits["orch"].run_campaign(campaign)
+
+    assert result["completed"] == 1
+    progress = [b[1] for b in bits["broadcasts"] if b[0] == "campaign_progress"]
+    stopped = [p for p in progress if p.get("phase") == "stopped"]
+    assert stopped
+    assert stopped[-1]["reason"] == "stop_on_first_crash reached"
+
+
+@pytest.mark.asyncio
+async def test_run_campaign_stops_when_runtime_limit_reached(tmp_path, monkeypatch):
+    bits = make_ctx(tmp_path)
+
+    import control.orchestrator as mod
+
+    ticks = iter([100.0, 101.0])
+    monkeypatch.setattr(mod.time, "monotonic", lambda: next(ticks, 101.0))
+
+    campaign = {
+        "id": "stop-runtime", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (10.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 3},
+        "trigger_mode": "software",
+        "shouter_auto_arm": False,
+        "verdict_timeout_ms": 10,
+        "max_runtime_seconds": 0.5,
+    }
+
+    result = await bits["orch"].run_campaign(campaign)
+
+    assert result["completed"] == 0
+    progress = [b[1] for b in bits["broadcasts"] if b[0] == "campaign_progress"]
+    stopped = [p for p in progress if p.get("phase") == "stopped"]
+    assert stopped
+    assert "max_runtime_seconds reached" in stopped[-1]["reason"]
+
+
+@pytest.mark.asyncio
 async def test_run_campaign_broadcasts_position_and_attempt(tmp_path):
     bits = make_ctx(tmp_path)
     campaign = {

@@ -59,6 +59,28 @@ def _connected_devices(ctx: AppContext) -> Dict[str, bool]:
     }
 
 
+def _provenance_blockers(campaign: Campaign, ctx: AppContext) -> List[str]:
+    if not campaign.build_sha:
+        return []
+
+    flashed = getattr(ctx, "flashed_firmware", None)
+    if flashed is None:
+        return []
+
+    blockers: List[str] = []
+    if flashed.build_sha != campaign.build_sha:
+        blockers.append(
+            "campaign build_sha "
+            f"{campaign.build_sha} does not match flashed DUT build {flashed.build_sha}"
+        )
+    if flashed.project_id and flashed.project_id != campaign.project_id:
+        blockers.append(
+            "campaign project_id "
+            f"{campaign.project_id} does not match flashed DUT project {flashed.project_id}"
+        )
+    return blockers
+
+
 def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
     blockers: List[str] = []
     warnings: List[str] = []
@@ -94,6 +116,9 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
         warnings.append("xds110 is not connected; flashing/debug will not work until it is connected")
     if not campaign.build_sha:
         warnings.append("campaign has no pinned build_sha; Control may build/use current project state")
+    elif getattr(ctx, "flashed_firmware", None) is None:
+        warnings.append("no successful DUT flash recorded; cannot verify pinned build_sha")
+    blockers.extend(_provenance_blockers(campaign, ctx))
     if ctx.campaigns and any(getattr(c, "active", False) for c in ctx.campaigns.values()):
         blockers.append("another campaign is currently active")
     if not ctx.state.snapshot().get("armed", False):
@@ -134,6 +159,10 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
 @router.post("", response_model=CampaignStatus)
 async def start(campaign: Campaign, ctx: AppContext = Depends(get_ctx)) -> CampaignStatus:
     """Start a campaign. Returns immediately with the assigned ID."""
+    provenance_blockers = _provenance_blockers(campaign, ctx)
+    if provenance_blockers:
+        raise HTTPException(status_code=409, detail={"blockers": provenance_blockers})
+
     if campaign.id is None:
         campaign.id = str(uuid.uuid4())
     if campaign.created_at is None:

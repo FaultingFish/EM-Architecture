@@ -59,6 +59,23 @@ class BuildArtifact(BaseModel):
     )
 
 
+class FlashedFirmware(BaseModel):
+    """Firmware metadata remembered by Control after a successful flash."""
+
+    build_sha: str = Field(..., description="Build hash flashed onto the DUT")
+    flashed_at: datetime
+    elf_url: Optional[str] = Field(None, description="ELF source used for the flash request")
+    project_id: Optional[str] = Field(None, description="Project ID when supplied by the caller")
+    project_version: Optional[str] = Field(
+        None,
+        description="Project version when supplied by the caller",
+    )
+    flash_result: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Raw programmer result metadata",
+    )
+
+
 class AssemblyInstruction(BaseModel):
     """One disassembled instruction with source mapping."""
 
