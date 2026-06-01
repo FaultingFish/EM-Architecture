@@ -50,18 +50,20 @@ class XDS110Adapter(BaseAdapter):
         self.dslite_ccxml = dslite_ccxml
         self.openocd_bin = openocd_bin
         self.openocd_config = openocd_config
+        self._port: Optional[str] = None
         self._debug_proc: Optional[subprocess.Popen] = None
 
     def connect(self, port: Optional[str] = None) -> None:
-        """No-op for subprocess-based adapter; presence-detect via XDS110 USB instead."""
-        pass
+        """Record the detected XDS110 path for dashboard/device status."""
+        self._port = port
 
     def disconnect(self) -> None:
         self.detach_debugger()
+        self._port = None
 
     @property
     def connected(self) -> bool:
-        return False
+        return self._port is not None
 
     def flash(self, elf_path: Path) -> dict:
         """Flash the MSPM0L2228 via dslite.
