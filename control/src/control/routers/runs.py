@@ -2,16 +2,48 @@
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 
 from control.deps import AppContext, get_ctx
 
 LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
+
+CSV_FIELDS = [
+    "id",
+    "ts",
+    "session",
+    "campaign_id",
+    "project_id",
+    "project_version",
+    "build_sha",
+    "target_pc",
+    "x",
+    "y",
+    "z",
+    "machine_x",
+    "machine_y",
+    "machine_z",
+    "trigger_mode",
+    "glitch_delay_us",
+    "pulse_width_ns",
+    "shouter_voltage",
+    "shouter_pulse_width_ns",
+    "shouter_pulse_width_ns_actual",
+    "outcome",
+    "shouter_state",
+    "elapsed_ms",
+    "verdict",
+    "error",
+]
 
 
 @router.get("/runs")
@@ -27,6 +59,47 @@ async def list_runs(
     if campaign:
         entries = [e for e in entries if e.get("campaign_id") == campaign]
     return entries
+
+
+@router.get("/runs/export")
+async def export_runs(
+    format: str = Query("csv", pattern="^(csv|parquet)$"),
+    campaign: Optional[str] = Query(None),
+    since: Optional[str] = Query(None),
+    outcome: Optional[str] = Query(None),
+    ctx: AppContext = Depends(get_ctx),
+) -> Response:
+    """Export attempt rows for offline analysis.
+
+    CSV is dependency-free and available everywhere. Parquet is intentionally
+    reserved until the project standardizes on a local/cloud analytics stack.
+    """
+    if format == "parquet":
+        raise HTTPException(
+            status_code=501,
+            detail="parquet export is not implemented yet; use format=csv",
+        )
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    for entry in ctx.logbook.iter_csv_rows(since=since, outcome=outcome):
+        if campaign and entry.get("campaign_id") != campaign:
+            continue
+        row = dict(entry)
+        for key in ("verdict",):
+            if isinstance(row.get(key), (dict, list)):
+                row[key] = json.dumps(row[key], separators=(",", ":"))
+        writer.writerow(row)
+
+    suffix = f"-{campaign}" if campaign else ""
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="emfi-runs{suffix}.csv"'
+        },
+    )
 
 
 @router.get("/runs/{run_id}")

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listRuns, replay } from '$lib/api/control';
+  import { exportRunsUrl, listRuns, replay } from '$lib/api/control';
   import { toasts } from '$lib/stores/toast';
 
   let runs: any[] = [];
@@ -41,6 +41,12 @@
       return new Date(ts).toLocaleString('en-GB', { hour12: false });
     } catch { return ts; }
   }
+
+  $: exportParams = {
+    ...(filterOutcome ? { outcome: filterOutcome } : {}),
+    ...(filterCampaign ? { campaign: filterCampaign } : {})
+  };
+  $: csvExportHref = exportRunsUrl(exportParams);
 </script>
 
 <div class="page">
@@ -56,6 +62,7 @@
     </select>
     <input type="text" bind:value={filterCampaign} placeholder="Campaign ID" />
     <button on:click={fetchRuns}>Filter</button>
+    <a class="export-btn" href={csvExportHref} download>Export CSV</a>
     {#if loading}<span class="loading">Loading…</span>{/if}
   </div>
 
@@ -114,6 +121,15 @@
   h2 { margin-bottom: 0.75rem; }
   .filters { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
   .filters select, .filters input { font-size: 12px; }
+  .export-btn {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--fg);
+    font-size: 12px;
+    padding: 0.25rem 0.6rem;
+    text-decoration: none;
+  }
+  .export-btn:hover { border-color: var(--accent); color: var(--accent); }
   .loading { color: var(--muted); font-size: 11px; }
   .table-wrap { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
   table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }

@@ -96,6 +96,11 @@ export async function listRuns(params: Record<string, string> = {}) {
   return request('GET', `/runs?${qs}`);
 }
 
+export function exportRunsUrl(params: Record<string, string> = {}) {
+  const qs = new URLSearchParams({ format: 'csv', ...params }).toString();
+  return `${CONTROL_URL}/runs/export?${qs}`;
+}
+
 export async function heatmap(z?: number, campaign?: string) {
   const qs = new URLSearchParams();
   if (z !== undefined) qs.set('z', String(z));

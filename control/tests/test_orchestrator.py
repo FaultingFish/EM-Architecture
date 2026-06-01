@@ -13,6 +13,7 @@ from control.orchestrator import (
     HostScriptContext,
     Orchestrator,
     ParamsView,
+    TRIGGER_WIDTH_NS,
     _default_host_script,
     _grid_points,
     _sweep_range_values,
@@ -545,7 +546,7 @@ async def test_one_shot_campaign_programs_pgen_and_skips_usb_pulse(tmp_path):
     # Trigger mode wired once.
     assert bits["scaffold"].trigger_mode == "one-shot"
     # pgen0 trigger width set ONCE at campaign start, to the fixed constant.
-    assert bits["scaffold"].pulse_widths_ns == [200.0]
+    assert bits["scaffold"].pulse_widths_ns == [TRIGGER_WIDTH_NS]
     # Three delay values swept (1.0, 1.5, 2.0) → three pgen delay programmings.
     assert bits["scaffold"].pulse_delays_us == [1.0, 1.5, 2.0]
     # HV pulse width pushed to the ChipSHOUTER EVERY attempt (not swept here,

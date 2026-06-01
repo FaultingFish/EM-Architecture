@@ -13,11 +13,11 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 
 ## V1 must-haves
 
-- [ ] **Orchestrator port** — `Orchestrator.perform_attempt` + `run_campaign` from `old-em-setup/glitchweb/backend/app/orchestrator.py`, extended with `delay_us × pulse_width_ns × voltage_v` sweep on top of the XYZ grid. Host-script invocation via `importlib.spec_from_file_location`. **(control)**
-- [ ] **Live campaign telemetry** — orchestrator publishes WS events: `position`, `attempt`, `counter`, `campaign_progress`. **(control)** — rolled into orchestrator
-- [ ] **STOP works mid-campaign** — `StopFlag` checked between every attempt; STOP / Esc / Space cleanly interrupts the running campaign. **(control)** — rolled into orchestrator
-- [ ] **Replay mode** — `POST /replay/{run_id}` re-runs the attempt with the exact recorded parameters. **(control)** — rolled into orchestrator
-- [ ] **dslite syntax fix** — flash actually programs the chip; current invocation makes dslite print --help. **(control)**
+- [x] **Orchestrator port** — `Orchestrator.perform_attempt` + `run_campaign` from `old-em-setup/glitchweb/backend/app/orchestrator.py`, extended with `delay_us × pulse_width_ns × voltage_v` sweep on top of the XYZ grid. Host-script invocation via `importlib.spec_from_file_location`. **(control)**
+- [x] **Live campaign telemetry** — orchestrator publishes WS events: `position`, `attempt`, `counter`, `campaign_progress`. **(control)** — rolled into orchestrator
+- [x] **STOP works mid-campaign** — `StopFlag` checked between every attempt; STOP / Esc / Space cleanly interrupts the running campaign. **(control)** — rolled into orchestrator
+- [x] **Replay mode** — `POST /replay/{run_id}` re-runs the attempt with the exact recorded parameters. **(control)** — rolled into orchestrator
+- [x] **dslite syntax fix** — flash actually programs the chip; current invocation makes dslite print --help. **(control)**
 
 ## V1+ nice-to-haves
 
@@ -40,6 +40,8 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 - [ ] **Heatmap parameter histogram** — `(delay_us, pulse_width_ns)` joint distribution for cells with ≥N glitches; finds sweet spots. **(view)**
 - [ ] **Campaign notes + tags** — free-text + tag per campaign; filter in the runs browser. **(control storage + view UI)**
 - [ ] **CSV / Parquet export** — `GET /runs/export?format=csv|parquet&campaign=…`. **(control)**
+  - [x] CSV endpoint and Runs page download
+  - [ ] Parquet endpoint
 - [ ] **State snapshot / restore** — capture the full rig configuration (ChipSHOUTER settings, position, ARM state) and restore later. **(control)**
 - [ ] **Pause / resume mid-campaign** — graceful pause that keeps position + counters, plus resume. **(control + view buttons)**
 - [ ] **Multi-project comparison** — heatmaps for two campaigns/projects side-by-side or overlaid. **(view)**
