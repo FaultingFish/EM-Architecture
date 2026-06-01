@@ -49,6 +49,7 @@ After: open `/runs` to filter by outcome, click a row to see details, or click *
 | JSONL logbook (canonical) | `~/.local/share/emfi-control/sessions/logbook-YYYYMMDD.jsonl` |
 | SQLite query index | `~/.local/share/emfi-control/sessions/index.sqlite` |
 | Dangerous-action audit log | `~/.local/share/emfi-control/audit/audit-YYYYMMDD.jsonl` |
+| Last flashed DUT provenance | `~/.local/share/emfi-control/flashed_firmware.json` |
 | Firmware projects | `~/emfi-projects/<project-id>/` |
 | Per-build artifacts | `~/emfi-projects/<project-id>/builds/<sha>/` |
 | Project version history | `~/emfi-projects/<project-id>/.git/` |
@@ -124,6 +125,12 @@ In order of usefulness when something is wrong:
    ```
 4. **The browser console** in View for client-side issues (WS reconnect, type errors against API responses).
 5. **Swagger UI** at `http://lab-box:8001/docs` lets you call any Control endpoint manually to isolate "is it the UI or the backend?"
+
+Control also reads `~/emfi-projects/<project-id>/targets.json` at campaign
+start. If a campaign sets `target_pc`, omits `sweep.delay_us`, and the matching
+GlitchTarget has expected delay cycles, Control materializes `delay_us` from
+that metadata. Range targets use `expected_delay_cycles` through
+`expected_delay_cycles_end` at the build's cached `cpu_mhz`.
 
 ---
 

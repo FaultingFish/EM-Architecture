@@ -16,6 +16,7 @@ from emfi_protocol.projects import FlashedFirmware
 from pydantic import BaseModel
 
 from control.deps import AppContext, call_adapter, call_subprocess_adapter, get_ctx
+from control.provenance import save_flashed_firmware
 
 LOGGER = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ async def flash(req: FlashRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
     elf_path = await _resolve_elf(req.elf_url)
 
     result = await call_subprocess_adapter(ctx.xds110.flash, elf_path)
-    ctx.flashed_firmware = FlashedFirmware(
+    record = FlashedFirmware(
         build_sha=req.build_sha,
         elf_url=req.elf_url,
         project_id=req.project_id,
@@ -61,6 +62,11 @@ async def flash(req: FlashRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
         flashed_at=datetime.now(timezone.utc),
         flash_result=result if isinstance(result, dict) else {"result": result},
     )
+    ctx.flashed_firmware = record
+    try:
+        save_flashed_firmware(record)
+    except OSError:
+        LOGGER.exception("Flash succeeded but failed to persist flashed firmware provenance")
 
     ctx.broadcast("device_status", {"name": "xds110", "connected": True})
     LOGGER.info("Flash complete: build_sha=%s result=%s", req.build_sha, result)

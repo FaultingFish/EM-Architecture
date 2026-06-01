@@ -41,6 +41,15 @@ async def test_flash_remembers_successful_build_metadata(monkeypatch):
 
     monkeypatch.setattr(target, "call_adapter", fake_call_adapter)
     monkeypatch.setattr(target, "call_subprocess_adapter", fake_call_subprocess_adapter)
+
+    saved = {}
+
+    def fake_save(record):
+        saved["record"] = record
+        return Path("/tmp/flashed_firmware.json")
+
+    monkeypatch.setattr(target, "save_flashed_firmware", fake_save)
+
     async def fake_resolve_elf(url: str) -> Path:
         return Path("/tmp/test.elf")
 
@@ -62,4 +71,5 @@ async def test_flash_remembers_successful_build_metadata(monkeypatch):
     assert ctx.flashed_firmware.project_version == "main"
     assert ctx.flashed_firmware.elf_url == "file:///tmp/test.elf"
     assert ctx.flashed_firmware.flash_result["programmer"] == "fake"
+    assert saved["record"].build_sha == "abc123"
     assert ("device_status", {"name": "xds110", "connected": True}) in ctx.broadcasts

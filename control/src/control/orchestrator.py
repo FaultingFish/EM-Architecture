@@ -21,8 +21,10 @@ filesystem read is simpler than HTTP).
 from __future__ import annotations
 
 import asyncio
+import json
 import importlib.util
 import logging
+import os
 import time
 import traceback
 import uuid
@@ -182,6 +184,107 @@ def _load_host_script(project_id: str) -> Tuple[Any, Optional[Path]]:
     except Exception:
         LOGGER.exception("Failed to load host script at %s; using default", path)
         return None, path
+
+
+def _projects_root() -> Path:
+    return Path(os.environ.get("EMFI_PROJECTS_ROOT") or (Path.home() / "emfi-projects"))
+
+
+def _project_dir(project_id: str) -> Path:
+    return _projects_root() / project_id
+
+
+def _load_target_record(project_id: str, target_pc: Optional[int]) -> Optional[Dict[str, Any]]:
+    if target_pc is None:
+        return None
+    path = _project_dir(project_id) / "targets.json"
+    try:
+        records = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception:
+        LOGGER.exception("Could not read target metadata from %s", path)
+        return None
+
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        try:
+            start = int(record.get("pc_address"))
+            end = int(record.get("pc_end") or start)
+        except (TypeError, ValueError):
+            continue
+        if start <= int(target_pc) <= end:
+            return record
+    return None
+
+
+def _load_cpu_mhz(project_id: str, build_sha: Optional[str]) -> float:
+    if not build_sha:
+        return 32.0
+    path = _project_dir(project_id) / "builds" / build_sha / "disassembly.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return 32.0
+    except Exception:
+        LOGGER.exception("Could not read disassembly metadata from %s", path)
+        return 32.0
+    try:
+        cpu_mhz = float(data.get("cpu_mhz") or 32.0)
+    except (TypeError, ValueError):
+        return 32.0
+    return cpu_mhz if cpu_mhz > 0 else 32.0
+
+
+def materialize_target_delay_sweep(
+    project_id: str,
+    build_sha: Optional[str],
+    target_pc: Optional[int],
+    sweep: Any,
+) -> Tuple[Any, Optional[str]]:
+    """Fill sweep.delay_us from GlitchTarget delay metadata when omitted."""
+    existing_delay = sweep.get("delay_us") if isinstance(sweep, dict) else getattr(sweep, "delay_us", None)
+    if existing_delay is not None:
+        return sweep, None
+
+    target = _load_target_record(project_id, target_pc)
+    if target is None:
+        return sweep, None
+
+    start_cycles = target.get("expected_delay_cycles")
+    if start_cycles is None:
+        return sweep, None
+    end_cycles = target.get("expected_delay_cycles_end")
+    if end_cycles is None:
+        end_cycles = start_cycles
+
+    try:
+        start_cycles_f = float(start_cycles)
+        end_cycles_f = float(end_cycles)
+    except (TypeError, ValueError):
+        return sweep, None
+
+    cpu_mhz = _load_cpu_mhz(project_id, build_sha)
+    start_us = start_cycles_f / cpu_mhz
+    stop_us = end_cycles_f / cpu_mhz
+    delay_range = {
+        "start": min(start_us, stop_us),
+        "stop": max(start_us, stop_us),
+        "step": 1.0 / cpu_mhz,
+    }
+
+    if isinstance(sweep, dict):
+        materialized = dict(sweep)
+        materialized["delay_us"] = delay_range
+    else:
+        materialized = sweep.model_copy(update={"delay_us": delay_range})
+
+    name = target.get("name") or (f"0x{int(target_pc):x}" if target_pc is not None else "target")
+    return materialized, (
+        f"delay_us materialized from target {name!r} "
+        f"({start_cycles_f:g}-{end_cycles_f:g} cycles at {cpu_mhz:g} MHz)"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -509,7 +612,11 @@ class Orchestrator:
         )
 
         grid = c["grid"]
-        sweep = c["sweep"]
+        sweep, sweep_note = materialize_target_delay_sweep(
+            project_id, build_sha, target_pc, c["sweep"]
+        )
+        if sweep_note:
+            LOGGER.info("Campaign %s %s", campaign_id, sweep_note)
 
         delays = _sweep_range_values(sweep.get("delay_us"))
         widths = _sweep_range_values(sweep.get("pulse_width_ns"))

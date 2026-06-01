@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,7 @@ from control.orchestrator import (
     _default_host_script,
     _grid_points,
     _sweep_range_values,
+    materialize_target_delay_sweep,
 )
 from control.safety import ArmGate, RateLimiter, StopFlag
 from control.state import AppState, DeviceStatus
@@ -194,6 +196,49 @@ def test_sweep_range_values_none_yields_single_none():
 def test_sweep_range_values_inclusive_stepped():
     rng = {"start": 1.0, "stop": 3.0, "step": 1.0}
     assert _sweep_range_values(rng) == [1.0, 2.0, 3.0]
+
+
+def test_materialize_target_delay_sweep_from_target_range(tmp_path, monkeypatch):
+    root = tmp_path / "projects"
+    project = root / "purpleboardtest"
+    build = project / "builds" / "abc123"
+    build.mkdir(parents=True)
+    (project / "targets.json").write_text(json.dumps([
+        {
+            "pc_address": 0x1000,
+            "pc_end": 0x1008,
+            "name": "range",
+            "expected_delay_cycles": 64,
+            "expected_delay_cycles_end": 96,
+            "created_at": "2026-06-01T00:00:00+00:00",
+        }
+    ]))
+    (build / "disassembly.json").write_text(json.dumps({
+        "project_id": "purpleboardtest",
+        "build_sha": "abc123",
+        "cpu_mhz": 16.0,
+        "instructions": [],
+    }))
+    monkeypatch.setenv("EMFI_PROJECTS_ROOT", str(root))
+
+    sweep, note = materialize_target_delay_sweep(
+        "purpleboardtest", "abc123", 0x1000, {"attempts_per_point": 1}
+    )
+
+    assert note is not None
+    assert sweep["delay_us"] == {"start": 4.0, "stop": 6.0, "step": 0.0625}
+
+
+def test_materialize_target_delay_sweep_keeps_explicit_delay(tmp_path, monkeypatch):
+    monkeypatch.setenv("EMFI_PROJECTS_ROOT", str(tmp_path))
+    explicit = {"delay_us": {"start": 1.0, "stop": 2.0, "step": 0.5}}
+
+    sweep, note = materialize_target_delay_sweep(
+        "purpleboardtest", "abc123", 0x1000, explicit
+    )
+
+    assert sweep == explicit
+    assert note is None
 
 
 def test_grid_points_serpentine_y():

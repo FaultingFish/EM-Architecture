@@ -23,6 +23,7 @@ from control.audit import AuditLog, default_audit_dir
 from control.config import Config
 from control.logbook import Logbook, default_log_dir
 from control.orchestrator import Orchestrator
+from control.provenance import load_flashed_firmware
 from control.safety import ArmGate, RateLimiter, StopFlag
 from control.state import AppState, Broadcaster, DeviceStatus
 from control.workers import DeviceWorker, WorkerRegistry
@@ -131,6 +132,7 @@ def build_context() -> AppContext:
         scaffold=scaffold,
         xds110=xds110,
         orchestrator=None,  # type: ignore[arg-type]
+        flashed_firmware=load_flashed_firmware(),
     )
 
     orchestrator = Orchestrator(

@@ -151,8 +151,15 @@ Campaign requests may include optional stop policies under `stop_conditions`:
 Control validates these fields at request parse time and enforces them between
 attempts. For build provenance, include `build_sha` and pass `project_id` /
 `project_version` on `POST /api/control/target/flash` when available. Control
-records the last successful DUT flash in memory and blocks campaign start when
-a pinned campaign build does not match the recorded flashed build.
+records the last successful DUT flash in
+`~/.local/share/emfi-control/flashed_firmware.json` and blocks campaign start
+when a pinned campaign build does not match the recorded flashed build.
+
+If a campaign sets `target_pc` and leaves `sweep.delay_us` unset, Control will
+look up the matching GlitchTarget in `~/emfi-projects/<project-id>/targets.json`
+and materialize a delay sweep from `expected_delay_cycles` to
+`expected_delay_cycles_end`. Agents should still set an explicit `delay_us`
+sweep when they need to override the target annotation.
 
 ## Audit trail
 
@@ -251,8 +258,6 @@ curl -fsS -X POST "$EMFI_ORIGIN/api/control/campaigns/$CAMPAIGN_ID/stop" \
 
 - Keep bearer-token middleware enabled on remote deployments and add focused
   tests for malformed config, missing bearer, invalid token, and missing scope.
-- Persist flashed firmware provenance across Control restarts so preflight can
-  verify `build_sha` after service reloads.
 - Harden `POST /campaigns/preflight` to cover all campaign budget limits
   without touching hardware.
 - Add campaign budgets: max attempts, max runtime, max voltage, max pulse rate,

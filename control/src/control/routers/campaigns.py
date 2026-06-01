@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from emfi_protocol.campaigns import Campaign, CampaignStatus
 
 from control.deps import AppContext, get_ctx
+from control.orchestrator import materialize_target_delay_sweep
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,11 +34,22 @@ class CampaignPreflight(BaseModel):
 
 def _count_sweep_points(sweep) -> int:
     count = 1
-    for dim in (sweep.delay_us, sweep.pulse_width_ns, sweep.voltage_v):
-        if dim is not None and dim.step > 0:
-            steps = int((dim.stop - dim.start) / dim.step) + 1
+    if isinstance(sweep, dict):
+        dimensions = (sweep.get("delay_us"), sweep.get("pulse_width_ns"), sweep.get("voltage_v"))
+        attempts_per_point = sweep.get("attempts_per_point", 1)
+    else:
+        dimensions = (sweep.delay_us, sweep.pulse_width_ns, sweep.voltage_v)
+        attempts_per_point = sweep.attempts_per_point
+    for dim in dimensions:
+        if dim is None:
+            continue
+        start = float(dim["start"]) if isinstance(dim, dict) else float(dim.start)
+        stop = float(dim["stop"]) if isinstance(dim, dict) else float(dim.stop)
+        step = float(dim["step"]) if isinstance(dim, dict) else float(dim.step)
+        if step > 0:
+            steps = int((stop - start) / step) + 1
             count *= max(1, steps)
-    count *= max(1, sweep.attempts_per_point)
+    count *= max(1, attempts_per_point)
     return count
 
 
@@ -86,7 +98,10 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
     warnings: List[str] = []
 
     grid_points = _count_grid_points(campaign.grid)
-    sweep_points = _count_sweep_points(campaign.sweep)
+    materialized_sweep, sweep_note = materialize_target_delay_sweep(
+        campaign.project_id, campaign.build_sha, campaign.target_pc, campaign.sweep
+    )
+    sweep_points = _count_sweep_points(materialized_sweep)
     total = grid_points * sweep_points
 
     if campaign.grid.top_right[0] < campaign.grid.origin[0]:
@@ -123,6 +138,8 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
         blockers.append("another campaign is currently active")
     if not ctx.state.snapshot().get("armed", False):
         warnings.append("system is not armed; campaign start will require arming first")
+    if sweep_note:
+        warnings.append(sweep_note)
 
     safety = ctx.config.get("safety", default={}) or {}
     max_voltage = int(safety.get("max_voltage_v", 0) or 0)

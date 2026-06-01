@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -78,6 +79,41 @@ def test_preflight_ok_counts_budget():
     assert result.sweep_points == 6
     assert result.total_attempts == 24
     assert result.blockers == []
+
+
+def test_preflight_counts_materialized_target_delay_sweep(tmp_path, monkeypatch):
+    root = tmp_path / "projects"
+    project = root / "purpleboardtest"
+    build = project / "builds" / "abc123"
+    build.mkdir(parents=True)
+    (project / "targets.json").write_text(json.dumps([
+        {
+            "pc_address": 0x1000,
+            "pc_end": 0x1004,
+            "name": "range",
+            "expected_delay_cycles": 32,
+            "expected_delay_cycles_end": 34,
+            "created_at": "2026-06-01T00:00:00+00:00",
+        }
+    ]))
+    (build / "disassembly.json").write_text(json.dumps({
+        "project_id": "purpleboardtest",
+        "build_sha": "abc123",
+        "cpu_mhz": 32.0,
+        "instructions": [],
+    }))
+    monkeypatch.setenv("EMFI_PROJECTS_ROOT", str(root))
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    result = _preflight(
+        _campaign(target_pc=0x1000, sweep=SweepParams(attempts_per_point=1)),
+        ctx,
+    )
+
+    assert result.ok is True
+    assert result.sweep_points == 3
+    assert result.total_attempts == 12
+    assert any("delay_us materialized from target" in w for w in result.warnings)
 
 
 def test_preflight_blocks_missing_required_device():
