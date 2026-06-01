@@ -1,6 +1,6 @@
 [Unit]
 Description=Local Caddy reverse proxy for EMFI
-After=network-online.target emfi-control.service emfi-develop.service emfi-view.service
+After=network-online.target emfi-control.service emfi-develop.service
 Wants=network-online.target
 
 [Service]

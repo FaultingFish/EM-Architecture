@@ -41,6 +41,8 @@ http://127.0.0.1:8080 {
 	}
 
 	handle {
-		reverse_proxy 127.0.0.1:8003
+		root * /var/www/emfi-view
+		try_files {path} /index.html
+		file_server
 	}
 }

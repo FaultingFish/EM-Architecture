@@ -19,8 +19,7 @@ On the lab box:
 ```text
 emfi-control.service -> 127.0.0.1:8001
 emfi-develop.service -> 127.0.0.1:8002
-emfi-view.service    -> 127.0.0.1:8003
-Caddy                -> 127.0.0.1:8080
+Caddy                -> 127.0.0.1:8080 and serves static View from /var/www/emfi-view
 cloudflared          -> outbound tunnel from Cloudflare to 127.0.0.1:8080
 ```
 
@@ -35,6 +34,9 @@ normal production build is enough for `emfi.ics.red`:
 cd /home/lab/EM-Architecture/view
 npm install
 npm run build
+sudo mkdir -p /var/www/emfi-view
+sudo rsync -a --delete build/ /var/www/emfi-view/
+sudo chown -R caddy:caddy /var/www/emfi-view
 ```
 
 For LAN-only development against direct service ports, override
@@ -47,7 +49,6 @@ Copy and edit the example units:
 ```bash
 sudo cp ops/systemd/emfi-control.service.example /etc/systemd/system/emfi-control.service
 sudo cp ops/systemd/emfi-develop.service.example /etc/systemd/system/emfi-develop.service
-sudo cp ops/systemd/emfi-view.service.example /etc/systemd/system/emfi-view.service
 sudo cp ops/systemd/emfi-caddy.service.example /etc/systemd/system/emfi-caddy.service
 ```
 
@@ -55,8 +56,8 @@ Edit the copied files for the real user, repo path, Python virtualenv path, and 
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now emfi-control emfi-develop emfi-view
-sudo systemctl status emfi-control emfi-develop emfi-view
+sudo systemctl enable --now emfi-control emfi-develop emfi-caddy
+sudo systemctl status emfi-control emfi-develop emfi-caddy
 ```
 
 The app services bind to `127.0.0.1` by default in these examples. That is intentional.
@@ -125,7 +126,6 @@ Allow outbound HTTPS for `cloudflared`. Block inbound public traffic to local ap
 ```bash
 sudo ufw deny 8001/tcp
 sudo ufw deny 8002/tcp
-sudo ufw deny 8003/tcp
 sudo ufw deny 8080/tcp
 ```
 
@@ -138,7 +138,7 @@ From the lab box:
 ```bash
 curl -I http://127.0.0.1:8001/docs
 curl -I http://127.0.0.1:8002/docs
-curl -I http://127.0.0.1:8003/
+curl -I http://127.0.0.1:8080/
 curl -I http://127.0.0.1:8080/api/control/docs
 ```
 

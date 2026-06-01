@@ -10,7 +10,7 @@ Before enabling the tunnel:
 4. Require MFA or an identity provider policy with equivalent assurance.
 5. Set a short session duration for operators.
 6. Keep Caddy bound to `127.0.0.1` and keep app services bound to `127.0.0.1`.
-7. Block direct inbound access to ports `8001`, `8002`, `8003`, and `8080` at the host firewall.
+7. Block direct inbound access to ports `8001`, `8002`, and `8080` at the host firewall.
 
 Suggested policy shape:
 
