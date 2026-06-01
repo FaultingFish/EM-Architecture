@@ -28,9 +28,9 @@ Each item names the owning app(s) and a short description. Cross-app items list 
   - [x] view: pre-submit grid/sweep estimate + small-grid warning on campaign form; calibration wizard blocks `top_right == origin`
   - [ ] control: verify flashed firmware/build provenance against `build_sha`
 - [x] **Time + cost estimator** — display total pulse count + ETA on the campaign config form before submit. **(view, reads stats from existing endpoints)**
-- [ ] **Campaign presets** — save/reload named campaign configurations per project. **(develop storage + view picker)**
+- [x] **Campaign presets** — save/reload named campaign configurations per project. **(develop storage + view picker)**
   - [x] develop: storage + REST endpoints
-  - [ ] view: picker on campaign config form
+  - [x] view: picker on campaign config form
 - [ ] **GlitchTarget range** — `pc_end` field so a single target spans an instruction range; campaign sweeps delay across the range. **(develop protocol + view picker)**
   - [x] develop: protocol fields + storage round-trip
   - [ ] view: range-select in AssemblyView

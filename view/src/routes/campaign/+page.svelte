@@ -3,7 +3,7 @@
   import { page } from '$app/stores';
   import SweepConfig from '$lib/components/SweepConfig.svelte';
   import GridConfig from '$lib/components/GridConfig.svelte';
-  import { listProjects } from '$lib/api/develop';
+  import { listPresets, listProjects } from '$lib/api/develop';
   import { startCampaign, preflightCampaign, ApiError } from '$lib/api/control';
   import { toasts } from '$lib/stores/toast';
   import { onMount } from 'svelte';
@@ -17,10 +17,13 @@
   }
 
   let projects: any[] = [];
+  let presets: any[] = [];
   let selectedProject = '';
   let selectedVersion = '';
+  let selectedPreset = '';
   let campaignName = '';
   let loading = false;
+  let presetsLoading = false;
   let showAdvanced = false;
   let showPreview = false;
   let preflightState: PreflightState = 'idle';
@@ -76,6 +79,13 @@
   });
 
   $: versions = projects.find((p: any) => p.id === selectedProject)?.versions ?? [];
+  let presetProject = '';
+  $: if (selectedProject !== presetProject) {
+    presetProject = selectedProject;
+    selectedPreset = '';
+    presets = [];
+    if (selectedProject) void fetchPresets(selectedProject);
+  }
 
   // ── Pre-flight estimate (read-only, computed before submit) ──
   let gridAck = false;
@@ -108,6 +118,71 @@
 
   $: formComplete = campaignName.trim() !== '' && selectedProject !== '';
   $: canSubmit = formComplete && !smallGridBlocked && preflightState !== 'fail';
+
+  async function fetchPresets(projectId: string) {
+    presetsLoading = true;
+    try {
+      const result = await listPresets(projectId);
+      if (presetProject === projectId) {
+        presets = Array.isArray(result) ? result : result?.presets ?? [];
+      }
+    } catch {
+      if (presetProject === projectId) presets = [];
+    } finally {
+      if (presetProject === projectId) presetsLoading = false;
+    }
+  }
+
+  function cloneRange(value: any) {
+    if (!value) return null;
+    return {
+      start: Number(value.start),
+      stop: Number(value.stop),
+      step: Number(value.step)
+    };
+  }
+
+  function applyPreset(presetId: string) {
+    const preset = presets.find((p: any) => p.id === presetId);
+    const config = preset?.config;
+    if (!preset || !config) return;
+
+    campaignName = String(config.name ?? preset.name ?? campaignName);
+    selectedVersion = config.project_version ?? '';
+    if (config.grid) {
+      grid = {
+        origin: [Number(config.grid.origin?.[0] ?? 0), Number(config.grid.origin?.[1] ?? 0)],
+        top_right: [
+          Number(config.grid.top_right?.[0] ?? 0),
+          Number(config.grid.top_right?.[1] ?? 0)
+        ],
+        step_size_mm: Number(config.grid.step_size_mm ?? 1),
+        z_min_mm: Number(config.grid.z_min_mm ?? 0),
+        z_max_mm: Number(config.grid.z_max_mm ?? 0),
+        z_step_mm: Number(config.grid.z_step_mm ?? 0.1)
+      };
+    }
+    if (config.sweep) {
+      sweep = {
+        delay_us: cloneRange(config.sweep.delay_us),
+        pulse_width_ns: cloneRange(config.sweep.pulse_width_ns),
+        voltage_v: cloneRange(config.sweep.voltage_v),
+        attempts_per_point: Number(config.sweep.attempts_per_point ?? 1)
+      };
+    }
+    triggerMode = String(config.trigger_mode ?? triggerMode);
+    shouterVoltage = Number(config.shouter_voltage ?? shouterVoltage);
+    shouterPulseWidth = Number(config.shouter_pulse_width_ns ?? shouterPulseWidth);
+    verdictTimeout = Number(config.verdict_timeout_ms ?? verdictTimeout);
+    shouterMute = Boolean(config.shouter_mute ?? shouterMute);
+    shouterAutoArm = Boolean(config.shouter_auto_arm ?? shouterAutoArm);
+    gridAck = false;
+    preflightState = 'idle';
+    preflightMessage = 'Preset loaded. Run preflight before start.';
+    preflightChecks = [];
+    lastPreflightKey = '';
+    toasts.info(`Loaded preset ${preset.name}`);
+  }
 
   function buildBody(): Record<string, unknown> {
     const body: Record<string, unknown> = {
@@ -365,6 +440,24 @@
               <option value="">latest (HEAD)</option>
               {#each versions as v}
                 <option value={v}>{v}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+        {#if selectedProject}
+          <div class="field">
+            <label for="camp-preset">Preset</label>
+            <select
+              id="camp-preset"
+              bind:value={selectedPreset}
+              disabled={presetsLoading || presets.length === 0}
+              on:change={() => applyPreset(selectedPreset)}
+            >
+              <option value="">
+                {presetsLoading ? 'Loading presets...' : presets.length ? 'Select preset' : 'No presets'}
+              </option>
+              {#each presets as preset}
+                <option value={preset.id}>{preset.name}</option>
               {/each}
             </select>
           </div>

@@ -43,3 +43,7 @@ export async function disassembly(id: string, sha: string) {
 export async function listTargets(id: string) {
   return request('GET', `/projects/${id}/targets`);
 }
+
+export async function listPresets(id: string) {
+  return request('GET', `/projects/${id}/presets`);
+}
