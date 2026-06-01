@@ -59,7 +59,7 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 - [ ] **Automation preflight endpoint** — validate devices, rails, build provenance, grid bounds, pulse budget, and safety limits before agent-launched campaigns. **(control + view)**
   - [x] initial endpoint + view gate for device, rail, grid, pulse-budget, and safety checks
   - [ ] flashed-firmware provenance and stop-condition policy checks
-- [ ] **Audit log for dangerous actions** — append operator/agent identity and request metadata for arm, pulse, motion, power, flash, and campaign start/stop. **(control)**
+- [x] **Audit log for dangerous actions** — append operator/agent identity and request metadata for arm, pulse, motion, power, flash, and campaign start/stop. **(control)**
 - [ ] **Dual-target campaign model** — represent DUT EMFI plus platform voltage-glitch timing explicitly for ChipWhisperer Husky/crowbar experiments. **(protocol + control + view)**
 
 ## Phase 2 (deferred)

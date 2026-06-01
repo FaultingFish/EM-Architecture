@@ -15,6 +15,7 @@ The real deployment is a single Linux box on a trusted lab LAN.
 | Shared venv | `/home/stephen/EM-Architecture/.venv` (also `control/.venv` after first `start.sh`) |
 | Deployment config | `/home/stephen/.config/emfi-control/config.json` |
 | Logbook + SQLite | `/home/stephen/.local/share/emfi-control/sessions/` |
+| Audit JSONL | `/home/stephen/.local/share/emfi-control/audit/audit-YYYYMMDD.jsonl` |
 | Service logs | `/home/stephen/.local/share/emfi-control/logs/control.log` (rotating) |
 
 Develop CLI is on the lab box at `~/.local/bin/claude`. UniFlash is at `~/ti/uniflash_9.4.1/dslite.sh`. OpenOCD is `/usr/bin/openocd` (0.12.0).
@@ -79,19 +80,21 @@ curl http://10.164.9.112:8001/openapi.json
 ## Tests
 
 ```bash
-cd ~/EM-Architecture/control && pytest -q
+cd ~/EM-Architecture/control
+PYTHONPATH=src:../protocol ../.venv/bin/python -m pytest
 ```
-Last run: **21 passed, 4 skipped** (orchestrator placeholders). Hardware-touching tests carry `@pytest.mark.hw` and are skipped by default; run with `pytest -m hw` only if you mean it.
+Hardware-touching tests carry `@pytest.mark.hw` and are skipped by default; run with `pytest -m hw` only if you mean it.
 
 ## Files you'll touch most
 
 | File | Why |
 |---|---|
 | `src/control/orchestrator.py` | Campaign engine — `perform_attempt` + `run_campaign`. **Carry forward from `old-em-setup/glitchweb/backend/app/orchestrator.py`**; extend with delay/voltage/pulse-width sweep |
-| `src/control/routers/*.py` | All endpoints currently return 501. Implement against the adapters |
+| `src/control/routers/*.py` | Hardware, safety, campaign, run, and target endpoints |
 | `src/control/adapters/*.py` | Wrap the upstream libs. Each call runs inside a `DeviceWorker` |
 | `src/control/adapters/xds110.py` | UniFlash for `flash()`, OpenOCD for `attach_debugger()` |
-| `tests/test_orchestrator.py` | Currently skipped; populate once adapter contract is firm |
+| `src/control/audit.py` | Append-only dangerous-action audit JSONL |
+| `tests/` | Focused unit/regression coverage; hardware tests are opt-in |
 
 ## Cross-app communication
 

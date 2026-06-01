@@ -48,6 +48,7 @@ After: open `/runs` to filter by outcome, click a row to see details, or click *
 | Control config | `~/.config/emfi-control/config.json` |
 | JSONL logbook (canonical) | `~/.local/share/emfi-control/sessions/logbook-YYYYMMDD.jsonl` |
 | SQLite query index | `~/.local/share/emfi-control/sessions/index.sqlite` |
+| Dangerous-action audit log | `~/.local/share/emfi-control/audit/audit-YYYYMMDD.jsonl` |
 | Firmware projects | `~/emfi-projects/<project-id>/` |
 | Per-build artifacts | `~/emfi-projects/<project-id>/builds/<sha>/` |
 | Project version history | `~/emfi-projects/<project-id>/.git/` |
@@ -117,8 +118,12 @@ In order of usefulness when something is wrong:
 
 1. **journalctl** for each service: `journalctl -u emfi-control -f` (and `-develop`, `-view`). Most adapter errors show here with a `_format_error()` prefix.
 2. **The JSONL logbook** for the run that misbehaved. `outcome`, `verdict`, `shouter_state`, `elapsed_ms` are all there.
-3. **The browser console** in View for client-side issues (WS reconnect, type errors against API responses).
-4. **Swagger UI** at `http://lab-box:8001/docs` lets you call any Control endpoint manually to isolate "is it the UI or the backend?"
+3. **The audit JSONL** for mutating hardware/API actions such as arm, pulse, motion, power, flash, campaign start/stop:
+   ```bash
+   tail -f ~/.local/share/emfi-control/audit/audit-$(date -u +%Y%m%d).jsonl
+   ```
+4. **The browser console** in View for client-side issues (WS reconnect, type errors against API responses).
+5. **Swagger UI** at `http://lab-box:8001/docs` lets you call any Control endpoint manually to isolate "is it the UI or the backend?"
 
 ---
 
@@ -151,6 +156,8 @@ These live in `ARCHITECTURE.md` § "Phase 2 deferrals". File them as features if
 ## 10. Getting help
 
 - Per-app contracts: `control/SPEC.md`, `develop/SPEC.md`, `view/SPEC.md`.
+- Short runbooks and wiki index: `docs/wiki/index.md`.
+- New-laptop development migration: `setup.md`.
 - Architecture rationale + the carry-forward catalog: `ARCHITECTURE.md`.
 - Bug history from the old codebase (worth a read for any weird hardware behavior): `old-em-setup/HANDOFF.md`.
 - Audit reports from initial scaffold: `develop/AUDIT.md`, `view/AUDIT.md`.

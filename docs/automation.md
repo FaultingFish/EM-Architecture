@@ -136,6 +136,19 @@ Avoid direct calls to raw hardware endpoints such as `/shouter/pulse`,
 `/motion/move_abs`, and Scaffold power routes from autonomous agents. Those
 should remain manual/operator or policy-gated endpoints.
 
+## Audit trail
+
+Control appends dangerous actions to daily JSONL files under
+`~/.local/share/emfi-control/audit/`. Entries include action, method, path,
+query string, status code, client address, timestamp, and the application
+principal when bearer-token auth is enabled.
+
+Audited routes include arm/disarm, raw ChipSHOUTER routes, motion routes,
+Scaffold power routes, device connect/disconnect, target flash/debug/reset
+routes, campaign start/stop, and replay. Treat this as the operator/agent
+forensics source; the run logbook remains the source of truth for attempt
+results.
+
 ## Curl examples
 
 These examples include both layers: Cloudflare Access service-token headers and
@@ -226,7 +239,8 @@ curl -fsS -X POST "$EMFI_ORIGIN/api/control/campaigns/$CAMPAIGN_ID/stop" \
   allowed trigger modes, allowed rails.
 - Add required campaign metadata: operator/agent id, objective, target board,
   target project/build, and notes.
-- Add audit events for arm, flash, motion, power, pulse, campaign start/stop.
+- Add read/query tooling for audit events so operators do not need to tail JSONL
+  by hand.
 - Add a read-only endpoint for live state so agents do not scrape WebSocket
   traffic when polling is enough.
 

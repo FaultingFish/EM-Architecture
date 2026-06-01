@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from control.audit import install_audit_middleware
 from control.auth import install_auth_middleware
 from control.deps import ADAPTER_ATTR, DEVICE_NAMES, build_context
 from control.routers import (
@@ -136,6 +137,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     install_auth_middleware(app)
+    install_audit_middleware(app)
 
     @app.exception_handler(Disarmed)
     async def _disarmed(request: Request, exc: Disarmed) -> JSONResponse:
@@ -178,6 +180,7 @@ def create_app() -> FastAPI:
             "service": "control",
             "config_path": str(ctx.config.path),
             "log_dir": str(ctx.logbook.log_dir),
+            "audit_dir": str(getattr(getattr(ctx, "audit_log", None), "audit_dir", "")),
             "armed": state.get("armed", False),
             "stop_requested": ctx.stop_flag.is_set(),
             "devices": {

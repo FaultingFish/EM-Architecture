@@ -19,6 +19,7 @@ from control.adapters.chipshouter import ChipShouterAdapter
 from control.adapters.chipshover import ChipShoverAdapter
 from control.adapters.scaffold import ScaffoldAdapter
 from control.adapters.xds110 import XDS110Adapter
+from control.audit import AuditLog, default_audit_dir
 from control.config import Config
 from control.logbook import Logbook, default_log_dir
 from control.orchestrator import Orchestrator
@@ -47,6 +48,7 @@ class AppContext:
     stop_flag: StopFlag
     rate_limiter: RateLimiter
     logbook: Logbook
+    audit_log: AuditLog
     workers: WorkerRegistry
     shover: ChipShoverAdapter
     shouter: ChipShouterAdapter
@@ -94,6 +96,7 @@ def build_context() -> AppContext:
     rate_limiter = RateLimiter("pulse", max_per_sec=float(max_pps))
 
     logbook = Logbook(default_log_dir())
+    audit_log = AuditLog(default_audit_dir())
     workers = WorkerRegistry()
 
     axes = config.get("axes", default={}) or {}
@@ -120,6 +123,7 @@ def build_context() -> AppContext:
         stop_flag=stop_flag,
         rate_limiter=rate_limiter,
         logbook=logbook,
+        audit_log=audit_log,
         workers=workers,
         shover=shover,
         shouter=shouter,

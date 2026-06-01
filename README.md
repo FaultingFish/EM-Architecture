@@ -18,7 +18,9 @@ Plus a shared `protocol/` package with Pydantic models + generated OpenAPI specs
 |---|---|
 | [`ARCHITECTURE.md`](./ARCHITECTURE.md) | You want the system-design rationale and the carry-forward catalog |
 | [`INSTALL.md`](./INSTALL.md) | You're standing up the platform on a fresh lab computer |
+| [`setup.md`](./setup.md) | You're moving development to a new laptop |
 | [`DOCS.md`](./DOCS.md) | You're running campaigns and need a usage / troubleshooting guide |
+| [`docs/wiki/index.md`](./docs/wiki/index.md) | You want short runbooks for repeated operator/developer workflows |
 | [`docs/remote-access.md`](./docs/remote-access.md) | You're exposing the lab through `emfi.ics.red` with Cloudflare Tunnel |
 | [`docs/automation.md`](./docs/automation.md) | You're giving AI agents or scripts authenticated campaign access |
 | [`agentsNotes.md`](./agentsNotes.md) | You're a Claude Code session picking up work on this repo |
@@ -51,7 +53,10 @@ Open `http://lab-box:8003/` in any browser on the LAN. For first-time setup foll
 
 ## Security model
 
-LAN-only, no auth, no TLS, plain HTTP. The lab network is the trust boundary. Do not expose any service to the public internet.
+The lab services are plain HTTP internally, but the public route is
+`emfi.ics.red` through Cloudflare Tunnel and Cloudflare Access. Control and
+Develop also support scoped app bearer tokens for automation. Do not expose
+Control directly to the public internet.
 
 ## Heritage
 
