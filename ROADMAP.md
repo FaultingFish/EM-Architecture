@@ -44,6 +44,19 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 - [ ] **Multi-project comparison** — heatmaps for two campaigns/projects side-by-side or overlaid. **(view)**
 - [ ] **Auto-resume after ChipSHOUTER fault** — clear fault and continue the campaign (configurable per-campaign). **(control orchestrator)**
 
+## Remote ops + automation
+
+- [x] **Single public origin plan** — document `emfi.ics.red` as one Cloudflare Access-protected hostname with local path routing to View, Control, and Develop. **(ops/docs)**
+- [x] **Local reverse-proxy examples** — add localhost-only Caddy routing for `/`, `/api/control`, and `/api/develop`. **(ops)**
+- [x] **Systemd service examples** — add service templates for Control, Develop, View, and Caddy bound to `127.0.0.1`. **(ops)**
+- [x] **Cloudflare Tunnel example** — add a locally-managed `cloudflared` config with a deny-by-default ingress fallback. **(ops)**
+- [x] **Health/readiness endpoints** — add `/healthz` and `/readyz` for Control and Develop. **(control + develop)**
+- [x] **Same-origin View defaults** — make View default to `/api/control` and `/api/develop`, including WebSocket URL generation. **(view)**
+- [ ] **Application auth middleware** — add scoped bearer-token auth on top of Cloudflare Access service tokens. **(control + develop)**
+- [ ] **Automation preflight endpoint** — validate devices, rails, build provenance, grid bounds, pulse budget, and safety limits before agent-launched campaigns. **(control + view)**
+- [ ] **Audit log for dangerous actions** — append operator/agent identity and request metadata for arm, pulse, motion, power, flash, and campaign start/stop. **(control)**
+- [ ] **Dual-target campaign model** — represent DUT EMFI plus platform voltage-glitch timing explicitly for ChipWhisperer Husky/crowbar experiments. **(protocol + control + view)**
+
 ## Phase 2 (deferred)
 
 - [ ] **USB webcam overlay + click-to-jog calibration** — visible bed → click → jog. **(control + view)**

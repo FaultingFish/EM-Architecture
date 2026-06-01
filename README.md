@@ -19,6 +19,8 @@ Plus a shared `protocol/` package with Pydantic models + generated OpenAPI specs
 | [`ARCHITECTURE.md`](./ARCHITECTURE.md) | You want the system-design rationale and the carry-forward catalog |
 | [`INSTALL.md`](./INSTALL.md) | You're standing up the platform on a fresh lab computer |
 | [`DOCS.md`](./DOCS.md) | You're running campaigns and need a usage / troubleshooting guide |
+| [`docs/remote-access.md`](./docs/remote-access.md) | You're exposing the lab through `emfi.ics.red` with Cloudflare Tunnel |
+| [`docs/automation.md`](./docs/automation.md) | You're giving AI agents or scripts authenticated campaign access |
 | [`agentsNotes.md`](./agentsNotes.md) | You're a Claude Code session picking up work on this repo |
 | [`control/SPEC.md`](./control/SPEC.md), [`develop/SPEC.md`](./develop/SPEC.md), [`view/SPEC.md`](./view/SPEC.md) | You're building out one specific app |
 

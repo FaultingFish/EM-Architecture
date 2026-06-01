@@ -147,6 +147,47 @@ def create_app() -> FastAPI:
     async def _not_impl(request: Request, exc: NotImplementedError) -> JSONResponse:
         return JSONResponse(status_code=501, content={"detail": f"Not implemented: {exc}"})
 
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz() -> dict[str, object]:
+        return {"ok": True, "service": "control"}
+
+    @app.get("/readyz", include_in_schema=False, response_model=None)
+    async def readyz(request: Request) -> JSONResponse | dict[str, object]:
+        ctx = getattr(request.app.state, "ctx", None)
+        if ctx is None:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "ok": False,
+                    "ready": False,
+                    "service": "control",
+                    "reason": "context not initialized",
+                },
+            )
+
+        config = ctx.config.snapshot()
+        ports = config.get("ports", {}) or {}
+        state = ctx.state.snapshot()
+        devices = state.get("devices", {})
+
+        return {
+            "ok": True,
+            "ready": True,
+            "service": "control",
+            "config_path": str(ctx.config.path),
+            "log_dir": str(ctx.logbook.log_dir),
+            "armed": state.get("armed", False),
+            "stop_requested": ctx.stop_flag.is_set(),
+            "devices": {
+                name: {
+                    "connected": status.get("connected", False),
+                    "busy": status.get("busy", False),
+                    "port_configured": bool(ports.get(f"{name}_override")),
+                }
+                for name, status in devices.items()
+            },
+        }
+
     @app.middleware("http")
     async def log_requests(request: Request, call_next) -> Response:
         LOGGER.info("%s %s", request.method, request.url.path)

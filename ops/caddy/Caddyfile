@@ -1,0 +1,46 @@
+# Local reverse proxy for the public Cloudflare Tunnel hostname.
+#
+# Install as /etc/caddy/emfi.Caddyfile, then run it with the example
+# emfi-caddy.service or adapt it into the distro Caddy service.
+#
+# Security: this listener is intentionally localhost-only. Cloudflare Tunnel
+# should be the only public entrypoint for emfi.ics.red, and Cloudflare Access
+# must protect the hostname because /api/control reaches dangerous hardware.
+
+{
+	auto_https off
+}
+
+http://127.0.0.1:8080 {
+	encode zstd gzip
+
+	handle /api/control {
+		redir /api/control/ 308
+	}
+
+	handle_path /api/control/* {
+		reverse_proxy 127.0.0.1:8001 {
+			header_up X-Forwarded-Prefix /api/control
+		}
+	}
+
+	handle /api/develop {
+		redir /api/develop/ 308
+	}
+
+	handle_path /api/develop/* {
+		reverse_proxy 127.0.0.1:8002 {
+			header_up X-Forwarded-Prefix /api/develop
+		}
+	}
+
+	# Human shortcut for Develop API docs. The Develop Svelte frontend is not
+	# base-path aware yet; keep API access under /api/develop for now.
+	handle /develop {
+		redir /api/develop/docs 308
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8003
+	}
+}

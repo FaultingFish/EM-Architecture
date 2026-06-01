@@ -15,7 +15,16 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from develop.config import projects_root, templates_root
+from develop.config import (
+    arm_gcc_bin,
+    arm_objcopy_bin,
+    arm_objdump_bin,
+    cargo_bin,
+    claude_bin,
+    control_url,
+    projects_root,
+    templates_root,
+)
 from develop.logging_config import setup_logging
 from develop.routers import (
     agent,
@@ -36,6 +45,10 @@ log_file = setup_logging()
 log = logging.getLogger(__name__)
 
 
+def static_build_dir() -> Path:
+    return Path(__file__).parent.parent.parent / "frontend" / "build"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Develop service starting up")
@@ -43,7 +56,7 @@ async def lifespan(app: FastAPI):
     log.info("Projects root: %s", projects_root())
     log.info("Templates root: %s", templates_root())
 
-    static_dir = Path(__file__).parent.parent.parent / "frontend" / "build"
+    static_dir = static_build_dir()
     if static_dir.exists():
         log.info("Serving built frontend from %s", static_dir)
     else:
@@ -83,6 +96,39 @@ def create_app() -> FastAPI:
         )
         return response
 
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz() -> dict[str, object]:
+        return {"ok": True, "service": "develop"}
+
+    @app.get("/readyz", include_in_schema=False)
+    async def readyz() -> dict[str, object]:
+        projects_dir = projects_root()
+        templates_dir = templates_root()
+        static_dir = static_build_dir()
+        ready = templates_dir.exists()
+
+        return {
+            "ok": ready,
+            "ready": ready,
+            "service": "develop",
+            "paths": {
+                "projects_root": str(projects_dir),
+                "projects_root_exists": projects_dir.exists(),
+                "templates_root": str(templates_dir),
+                "templates_root_exists": templates_dir.exists(),
+                "static_build": str(static_dir),
+                "static_build_exists": static_dir.exists(),
+            },
+            "control_url": control_url(),
+            "tools": {
+                "claude": claude_bin(),
+                "arm_gcc": arm_gcc_bin(),
+                "arm_objdump": arm_objdump_bin(),
+                "arm_objcopy": arm_objcopy_bin(),
+                "cargo": cargo_bin(),
+            },
+        }
+
     app.include_router(projects.router)
     app.include_router(builds.router)
     app.include_router(artifacts.router)
@@ -97,7 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(ws.router)
 
     # Serve the built SvelteKit frontend if present.
-    static_dir = Path(__file__).parent.parent.parent / "frontend" / "build"
+    static_dir = static_build_dir()
     if static_dir.exists():
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="ui")
 
