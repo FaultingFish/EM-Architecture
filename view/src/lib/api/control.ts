@@ -164,6 +164,24 @@ export async function listCampaigns() {
   return request('GET', '/campaigns');
 }
 
+export interface CampaignMetadata {
+  campaign_id: string;
+  notes?: string;
+  tags?: string[];
+  updated_at?: string;
+}
+
+export async function getCampaignMetadata(id: string): Promise<CampaignMetadata> {
+  return request('GET', `/campaigns/${encodeURIComponent(id)}/metadata`);
+}
+
+export async function putCampaignMetadata(
+  id: string,
+  body: { notes?: string; tags?: string[] }
+): Promise<CampaignMetadata> {
+  return request('PUT', `/campaigns/${encodeURIComponent(id)}/metadata`, body);
+}
+
 export type ScaffoldRail = 'dut' | 'platform' | 'all';
 export interface ScaffoldPowerState { dut: boolean; platform: boolean; }
 

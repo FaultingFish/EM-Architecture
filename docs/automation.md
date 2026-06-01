@@ -155,6 +155,26 @@ records the last successful DUT flash in
 `~/.local/share/emfi-control/flashed_firmware.json` and blocks campaign start
 when a pinned campaign build does not match the recorded flashed build.
 
+Agent-launched campaigns should also include `automation_policy`. Preflight
+checks these hard caps before launch; unlike `stop_conditions`, these are
+blocking admission rules rather than runtime stop rules:
+
+```json
+{
+  "automation_policy": {
+    "max_attempts": 10000,
+    "max_runtime_seconds": 1800,
+    "max_voltage": 450,
+    "allowed_trigger_modes": ["one-shot"]
+  }
+}
+```
+
+`POST /api/control/campaigns/preflight` blocks when total attempts, estimated
+minimum runtime at the configured pulse-rate limit, requested/swept voltage, or
+trigger mode exceeds the submitted policy. If `automation_policy` is omitted,
+preflight returns a warning because it cannot enforce automation-specific caps.
+
 If a campaign sets `target_pc` and leaves `sweep.delay_us` unset, Control will
 look up the matching GlitchTarget in `~/emfi-projects/<project-id>/targets.json`
 and materialize a delay sweep from `expected_delay_cycles` to
@@ -173,6 +193,12 @@ Scaffold power routes, device connect/disconnect, target flash/debug/reset
 routes, campaign start/stop, and replay. Treat this as the operator/agent
 forensics source; the run logbook remains the source of truth for attempt
 results.
+
+Campaign notes and tags are stored by campaign id at
+`GET/PUT /api/control/campaigns/{campaign_id}/metadata` and persisted in
+`~/.local/share/emfi-control/campaign_metadata.json`. They are operator
+annotations, separate from the attempt logbook and audit log. The Runs page can
+filter loaded rows by tag after it fetches campaign metadata.
 
 ## Curl examples
 
@@ -254,20 +280,32 @@ curl -fsS -X POST "$EMFI_ORIGIN/api/control/campaigns/$CAMPAIGN_ID/stop" \
   -H "Authorization: Bearer $EMFI_AUTOMATION_TOKEN"
 ```
 
-## Required API improvements before unattended attacks
+## Remaining API improvements before unattended attacks
 
-- Keep bearer-token middleware enabled on remote deployments and add focused
-  tests for malformed config, missing bearer, invalid token, and missing scope.
-- Harden `POST /campaigns/preflight` to cover all campaign budget limits
-  without touching hardware.
-- Add campaign budgets: max attempts, max runtime, max voltage, max pulse rate,
-  allowed trigger modes, allowed rails.
-- Add required campaign metadata: operator/agent id, objective, target board,
-  target project/build, and notes.
+- Keep bearer-token middleware enabled on remote deployments.
+- Extend campaign metadata from optional notes/tags into required unattended-run
+  fields when policy demands it: operator/agent id, objective, target board,
+  and target project/build.
+- Add policy fields that are not implemented yet, such as allowed rails and an
+  explicit max pulse-rate cap independent of Control's configured safety limit.
 - Add read/query tooling for audit events so operators do not need to tail JSONL
   by hand.
 - Add a read-only endpoint for live state so agents do not scrape WebSocket
   traffic when polling is enough.
+
+## Dual-target scaffold status
+
+The protocol now accepts `mode: "dual_target"` campaigns with `slots`,
+`timing.timeline`, named `sweeps`, and `budgets`. Control also exposes a Husky
+adapter/API scaffold that reports missing ChipWhisperer support or stub status
+without touching real hardware.
+
+Still missing before this is usable for real crowbar experiments:
+
+- per-slot flashed provenance for both DUT and Platform;
+- real ChipWhisperer Husky connect/configure/crowbar implementation;
+- campaign orchestrator support for synchronized EMFI + Husky actions;
+- View controls and analysis pages for dual-target runs.
 
 ## Future dual-target setup
 

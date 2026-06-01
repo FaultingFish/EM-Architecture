@@ -11,7 +11,13 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from emfi_protocol.campaigns import Campaign, CampaignStatus
+from emfi_protocol.campaigns import (
+    AutomationBudgetPolicy,
+    Campaign,
+    CampaignMetadata,
+    CampaignMetadataUpdate,
+    CampaignStatus,
+)
 
 from control.deps import AppContext, get_ctx
 from control.orchestrator import materialize_target_delay_sweep
@@ -93,6 +99,86 @@ def _provenance_blockers(campaign: Campaign, ctx: AppContext) -> List[str]:
     return blockers
 
 
+_VALID_TRIGGER_MODES = ("software", "one-shot", "free-run", "disabled")
+
+
+def _sweep_range_max(dim: Any) -> float | None:
+    if dim is None:
+        return None
+    start = float(dim["start"]) if isinstance(dim, dict) else float(dim.start)
+    stop = float(dim["stop"]) if isinstance(dim, dict) else float(dim.stop)
+    return max(start, stop)
+
+
+def _automation_policy_findings(
+    policy: AutomationBudgetPolicy | None,
+    campaign: Campaign,
+    materialized_sweep: Any,
+    total_attempts: int,
+    min_runtime_seconds: float | None,
+) -> tuple[List[str], List[str]]:
+    blockers: List[str] = []
+    warnings: List[str] = []
+    if policy is None:
+        warnings.append(
+            "campaign has no automation_policy; preflight cannot enforce automation budget caps"
+        )
+        return blockers, warnings
+
+    if policy.max_attempts is not None and total_attempts > policy.max_attempts:
+        blockers.append(
+            f"total attempts {total_attempts} exceeds automation_policy.max_attempts {policy.max_attempts}"
+        )
+
+    if policy.max_runtime_seconds is not None:
+        if min_runtime_seconds is None:
+            warnings.append(
+                "automation_policy.max_runtime_seconds set but no max_pulses_per_sec "
+                "rate limit is configured, so runtime cannot be estimated"
+            )
+        elif min_runtime_seconds > policy.max_runtime_seconds:
+            blockers.append(
+                "estimated minimum runtime "
+                f"{min_runtime_seconds:.3f}s exceeds automation_policy.max_runtime_seconds "
+                f"{policy.max_runtime_seconds:g}s"
+            )
+
+    if policy.max_voltage is not None:
+        voltage_candidates = [float(campaign.shouter_voltage)]
+        voltage_candidates.extend(
+            value
+            for value in (
+                _sweep_range_max(
+                    materialized_sweep.get("voltage_v")
+                    if isinstance(materialized_sweep, dict)
+                    else materialized_sweep.voltage_v
+                ),
+            )
+            if value is not None
+        )
+        max_requested_voltage = max(voltage_candidates)
+        if max_requested_voltage > policy.max_voltage:
+            blockers.append(
+                f"requested voltage {max_requested_voltage:g} exceeds automation_policy.max_voltage "
+                f"{policy.max_voltage}"
+            )
+
+    if policy.allowed_trigger_modes is not None:
+        allowed = [mode.strip() for mode in policy.allowed_trigger_modes if mode.strip()]
+        invalid = [mode for mode in allowed if mode not in _VALID_TRIGGER_MODES]
+        if invalid:
+            blockers.append(
+                "automation_policy.allowed_trigger_modes contains invalid modes: "
+                + ", ".join(invalid)
+            )
+        if campaign.trigger_mode not in allowed:
+            blockers.append(
+                f"trigger_mode {campaign.trigger_mode} is not allowed by automation_policy.allowed_trigger_modes"
+            )
+
+    return blockers, warnings
+
+
 def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
     blockers: List[str] = []
     warnings: List[str] = []
@@ -112,7 +198,7 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
         blockers.append("grid z_max_mm must be >= z_min_mm")
 
     trigger_mode = campaign.trigger_mode
-    if trigger_mode not in ("software", "one-shot", "free-run", "disabled"):
+    if trigger_mode not in _VALID_TRIGGER_MODES:
         blockers.append("trigger_mode must be one of software, one-shot, free-run, disabled")
 
     required_devices = ["chipshover", "chipshouter"]
@@ -154,6 +240,15 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
         )
     max_pps = float(safety.get("max_pulses_per_sec", 0) or 0)
     min_seconds = (total / max_pps) if max_pps > 0 else None
+    policy_blockers, policy_warnings = _automation_policy_findings(
+        campaign.automation_policy,
+        campaign,
+        materialized_sweep,
+        total,
+        min_seconds,
+    )
+    blockers.extend(policy_blockers)
+    warnings.extend(policy_warnings)
 
     if total > 100_000:
         warnings.append("campaign exceeds 100000 attempts; confirm runtime and wear before launch")
@@ -185,7 +280,10 @@ async def start(campaign: Campaign, ctx: AppContext = Depends(get_ctx)) -> Campa
     if campaign.created_at is None:
         campaign.created_at = datetime.now(timezone.utc)
 
-    total = _count_grid_points(campaign.grid) * _count_sweep_points(campaign.sweep)
+    materialized_sweep, _ = materialize_target_delay_sweep(
+        campaign.project_id, campaign.build_sha, campaign.target_pc, campaign.sweep
+    )
+    total = _count_grid_points(campaign.grid) * _count_sweep_points(materialized_sweep)
 
     status = CampaignStatus(
         campaign_id=campaign.id,
@@ -219,6 +317,23 @@ async def preflight(campaign: Campaign, ctx: AppContext = Depends(get_ctx)) -> C
 @router.get("", response_model=List[CampaignStatus])
 async def list_all(ctx: AppContext = Depends(get_ctx)) -> List[CampaignStatus]:
     return list(ctx.campaigns.values())
+
+
+@router.get("/{campaign_id}/metadata", response_model=CampaignMetadata)
+async def get_metadata(
+    campaign_id: str,
+    ctx: AppContext = Depends(get_ctx),
+) -> CampaignMetadata:
+    return ctx.campaign_metadata.get(campaign_id)
+
+
+@router.put("/{campaign_id}/metadata", response_model=CampaignMetadata)
+async def update_metadata(
+    campaign_id: str,
+    patch: CampaignMetadataUpdate,
+    ctx: AppContext = Depends(get_ctx),
+) -> CampaignMetadata:
+    return ctx.campaign_metadata.update(campaign_id, patch)
 
 
 @router.get("/{campaign_id}", response_model=CampaignStatus)

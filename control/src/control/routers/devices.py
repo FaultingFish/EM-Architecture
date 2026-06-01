@@ -84,6 +84,12 @@ class _PowerCycleRequest(BaseModel):
     off_time: float = Field(0.05, ge=0.0, le=5.0, description="Seconds OFF before re-energising")
 
 
+class _HuskyConfigureRequest(BaseModel):
+    delay_us: float = Field(..., ge=0.0)
+    width_ns: float = Field(..., gt=0.0)
+    output: str = Field("crowbar", min_length=1)
+
+
 def _broadcast_power(ctx: AppContext, state: Dict[str, bool]) -> None:
     ctx.broadcast("scaffold_power", state)
 
@@ -135,6 +141,35 @@ async def scaffold_power_cycle(
     _broadcast_power(ctx, state)
     LOGGER.info("Scaffold power cycled: rail=%s off_time=%.3fs -> %s", req.rail, req.off_time, state)
     return state
+
+
+@router.get("/husky/status")
+async def husky_status(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    """Return placeholder Husky status without adding it to DEVICE_NAMES yet."""
+    return ctx.husky.status()
+
+
+@router.post("/husky/configure")
+async def husky_configure(
+    req: _HuskyConfigureRequest, ctx: AppContext = Depends(get_ctx)
+) -> Dict[str, Any]:
+    """Configure the future Husky crowbar path.
+
+    Until the ChipWhisperer implementation lands, this route safely returns
+    501/500 through the shared adapter error mapping.
+    """
+    return await call_subprocess_adapter(
+        ctx.husky.configure_crowbar,
+        delay_us=req.delay_us,
+        width_ns=req.width_ns,
+        output=req.output,
+    )
+
+
+@router.post("/husky/crowbar_pulse")
+async def husky_crowbar_pulse(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    """Fire one future Husky crowbar pulse when implementation is available."""
+    return await call_subprocess_adapter(ctx.husky.crowbar_pulse)
 
 
 @router.post("/{name}/connect")

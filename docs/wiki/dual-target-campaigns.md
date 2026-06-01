@@ -5,7 +5,7 @@ attacked with EMFI and the Platform slot is attacked with a voltage crowbar. It
 is intentionally practical: the first implementation should extend the current
 single-rig campaign loop without building a generic workflow engine.
 
-As of 2026-06-01, the current plan is:
+As of 2026-06-01, the current plan and implementation status is:
 
 - DUT slot: MSPM0L2228 running the primary target firmware, attacked by
   ChipSHOUTER EMFI through the ChipShover/Scaffold trigger path.
@@ -13,6 +13,11 @@ As of 2026-06-01, the current plan is:
   by a ChipWhisperer Husky crowbar path.
 - Public access: `emfi.ics.red` behind Cloudflare Access plus EMFI bearer-token
   auth for automation clients.
+- Implemented now: protocol models for dual-target slots/timing/sweeps/budgets,
+  and a Control Husky adapter/API scaffold that reports unavailable or stub
+  status safely.
+- Not implemented yet: per-slot flashed provenance, real Husky hardware
+  control, synchronized EMFI + Husky orchestration, and View dual-target UI.
 
 ## Goals
 
@@ -126,7 +131,7 @@ when `mode == "dual_target"`:
 }
 ```
 
-Field notes for the later protocol change:
+Field notes for the protocol fields:
 
 - `mode`: default `single_target` for current campaigns.
 - `slots`: per-slot firmware, power, UART, programmer, and glitcher mapping.
@@ -185,6 +190,12 @@ Required checks:
 - Trigger source is available to both timing paths or the configured fanout is
   documented.
 - ARM state policy is explicit: manual arm, agent arm allowed, or reject.
+
+Current preflight only fully covers the single-target path plus submitted
+`automation_policy` caps (`max_attempts`, `max_runtime_seconds`, `max_voltage`,
+and `allowed_trigger_modes`). Dual-target slot/timeline validation currently
+happens in the protocol model; hardware readiness, per-slot provenance, rail
+policy, and Husky availability checks still need to be added to preflight.
 
 Warnings that should not necessarily block:
 
@@ -267,16 +278,19 @@ The first View implementation can stay simple:
 - preflight panel that lists blocking failures and warnings by slot/device;
 - run page that can filter outcomes by DUT, Platform, or combined result.
 
-## Implementation order
+## Implementation status
 
-1. Add protocol models for `mode`, `slots`, `timing.timeline`, named `sweeps`,
+1. [x] Add protocol models for `mode`, `slots`, `timing.timeline`, named `sweeps`,
    and `budgets` while preserving current `Campaign` compatibility.
-2. Track last flashed provenance per slot in Control.
-3. Extend preflight to validate both slots and the timeline.
-4. Add a Husky adapter with connect/status/configure/crowbar-pulse methods.
-5. Teach the orchestrator to program both timing paths per attempt.
-6. Extend attempt logging and CSV export for nested EMFI/crowbar data.
-7. Add View controls and dual-target run analysis.
+2. [ ] Track last flashed provenance per slot in Control.
+3. [ ] Extend preflight to validate both slots, rail policy, Husky readiness,
+   and the full timeline.
+4. [x] Add a Husky adapter with status/configure/crowbar-pulse route shape.
+5. [ ] Replace the Husky stub with real ChipWhisperer connect/configure/pulse
+   behavior.
+6. [ ] Teach the orchestrator to program both timing paths per attempt.
+7. [ ] Extend attempt logging and CSV export for nested EMFI/crowbar data.
+8. [ ] Add View controls and dual-target run analysis.
 
 Do the protocol and preflight work before adding UI polish. If Control cannot
 reject an unsafe dual-target campaign without touching hardware, it is not ready

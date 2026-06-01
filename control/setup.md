@@ -17,6 +17,7 @@ The real deployment is a single Linux box on a trusted lab LAN.
 | Logbook + SQLite | `/home/stephen/.local/share/emfi-control/sessions/` |
 | Audit JSONL | `/home/stephen/.local/share/emfi-control/audit/audit-YYYYMMDD.jsonl` |
 | Last flashed DUT provenance | `/home/stephen/.local/share/emfi-control/flashed_firmware.json` |
+| Campaign notes/tags | `/home/stephen/.local/share/emfi-control/campaign_metadata.json` |
 | Service logs | `/home/stephen/.local/share/emfi-control/logs/control.log` (rotating) |
 
 Develop CLI is on the lab box at `~/.local/bin/claude`. UniFlash is at `~/ti/uniflash_9.4.1/dslite.sh`. OpenOCD is `/usr/bin/openocd` (0.12.0).
@@ -94,7 +95,9 @@ Hardware-touching tests carry `@pytest.mark.hw` and are skipped by default; run 
 | `src/control/routers/*.py` | Hardware, safety, campaign, run, and target endpoints |
 | `src/control/adapters/*.py` | Wrap the upstream libs. Each call runs inside a `DeviceWorker` |
 | `src/control/adapters/xds110.py` | UniFlash for `flash()`, OpenOCD for `attach_debugger()` |
+| `src/control/adapters/husky.py` | Stub ChipWhisperer Husky crowbar surface; not real hardware control yet |
 | `src/control/audit.py` | Append-only dangerous-action audit JSONL |
+| `src/control/campaign_metadata.py` | Durable campaign notes/tags keyed by campaign id |
 | `src/control/provenance.py` | Durable Control-side records such as last flashed DUT build |
 | `tests/` | Focused unit/regression coverage; hardware tests are opt-in |
 

@@ -8,7 +8,14 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from emfi_protocol.campaigns import Campaign, GridParams, SweepParams, SweepRange
+import control.routers.campaigns as campaigns_router
+from emfi_protocol.campaigns import (
+    AutomationBudgetPolicy,
+    Campaign,
+    GridParams,
+    SweepParams,
+    SweepRange,
+)
 from emfi_protocol.projects import FlashedFirmware
 
 from control.routers.campaigns import _preflight, start
@@ -79,6 +86,7 @@ def test_preflight_ok_counts_budget():
     assert result.sweep_points == 6
     assert result.total_attempts == 24
     assert result.blockers == []
+    assert any("no automation_policy" in w for w in result.warnings)
 
 
 def test_preflight_counts_materialized_target_delay_sweep(tmp_path, monkeypatch):
@@ -132,6 +140,68 @@ def test_preflight_blocks_voltage_over_safety_limit():
 
     assert result.ok is False
     assert any("exceeds safety max_voltage_v" in b for b in result.blockers)
+
+
+def test_preflight_blocks_automation_policy_max_attempts():
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    result = _preflight(
+        _campaign(automation_policy=AutomationBudgetPolicy(max_attempts=10)),
+        ctx,
+    )
+
+    assert result.ok is False
+    assert any("automation_policy.max_attempts" in b for b in result.blockers)
+
+
+def test_preflight_blocks_automation_policy_max_runtime():
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    result = _preflight(
+        _campaign(automation_policy=AutomationBudgetPolicy(max_runtime_seconds=1)),
+        ctx,
+    )
+
+    assert result.ok is False
+    assert any("automation_policy.max_runtime_seconds" in b for b in result.blockers)
+
+
+def test_preflight_blocks_automation_policy_max_voltage_from_base_and_sweep():
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    base = _preflight(
+        _campaign(automation_policy=AutomationBudgetPolicy(max_voltage=200)),
+        ctx,
+    )
+    swept = _preflight(
+        _campaign(
+            shouter_voltage=150,
+            sweep=SweepParams(
+                voltage_v=SweepRange(start=100, stop=260, step=80),
+                attempts_per_point=1,
+            ),
+            automation_policy=AutomationBudgetPolicy(max_voltage=200),
+        ),
+        ctx,
+    )
+
+    assert any("automation_policy.max_voltage" in b for b in base.blockers)
+    assert any("automation_policy.max_voltage" in b for b in swept.blockers)
+
+
+def test_preflight_blocks_automation_policy_trigger_mode():
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    result = _preflight(
+        _campaign(
+            trigger_mode="software",
+            automation_policy=AutomationBudgetPolicy(allowed_trigger_modes=["one-shot"]),
+        ),
+        ctx,
+    )
+
+    assert result.ok is False
+    assert any("allowed by automation_policy.allowed_trigger_modes" in b for b in result.blockers)
 
 
 def test_preflight_warns_when_not_armed_or_pinned():
@@ -201,3 +271,41 @@ async def test_campaign_start_blocks_flashed_build_mismatch():
 
     assert exc.value.status_code == 409
     assert any("does not match flashed DUT build" in b for b in exc.value.detail["blockers"])
+
+
+@pytest.mark.asyncio
+async def test_campaign_start_counts_materialized_target_delay_sweep(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / "projects"
+    project = root / "purpleboardtest"
+    build = project / "builds" / "abc123"
+    build.mkdir(parents=True)
+    (project / "targets.json").write_text(json.dumps([
+        {
+            "pc_address": 0x1000,
+            "pc_end": 0x1004,
+            "name": "range",
+            "expected_delay_cycles": 32,
+            "expected_delay_cycles_end": 34,
+            "created_at": "2026-06-01T00:00:00+00:00",
+        }
+    ]))
+    (build / "disassembly.json").write_text(json.dumps({
+        "project_id": "purpleboardtest",
+        "build_sha": "abc123",
+        "cpu_mhz": 32.0,
+        "instructions": [],
+    }))
+    monkeypatch.setenv("EMFI_PROJECTS_ROOT", str(root))
+    monkeypatch.setattr(campaigns_router.asyncio, "create_task", lambda coro: coro.close())
+
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    status = await start(
+        _campaign(target_pc=0x1000, sweep=SweepParams(attempts_per_point=1)),
+        ctx,
+    )
+
+    assert status.total_attempts == 12

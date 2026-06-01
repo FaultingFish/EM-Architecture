@@ -26,9 +26,12 @@ This is the short runbook for a normal campaign day.
 ## After a campaign
 
 1. Export interesting runs from the Runs page.
-2. Add notes or tags if the campaign produced useful behavior.
-3. Leave the rig disarmed and DUT/platform power in the intended state.
-4. Check the Control audit JSONL when investigating who or what triggered a
+2. Add notes or tags if the campaign produced useful behavior. Tags are useful
+   for later filtering in the Runs page.
+3. Use the Heatmap page drill-down to inspect attempts for a selected cell and
+   compare the delay/width parameter distribution before rerunning anything.
+4. Leave the rig disarmed and DUT/platform power in the intended state.
+5. Check the Control audit JSONL when investigating who or what triggered a
    dangerous action:
 
    ```bash

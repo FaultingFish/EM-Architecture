@@ -28,6 +28,8 @@ reading the whole repo.
 
 ## Open wiki pages to add
 
-- ChipWhisperer Husky setup and crowbar wiring.
+- ChipWhisperer Husky setup and crowbar wiring. The Control/API scaffold is
+  documented in [`dual-target-campaigns.md`](./dual-target-campaigns.md), but
+  real hardware setup still needs its own runbook.
 - XDS110 flash/debug troubleshooting.
 - Campaign analysis recipes.

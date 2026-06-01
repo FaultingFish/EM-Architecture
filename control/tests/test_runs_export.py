@@ -108,3 +108,28 @@ def test_runs_export_route_precedes_run_id_route(tmp_path):
 
     assert response.status_code == 200
     assert response.text.splitlines()[0].startswith("id,ts,session")
+
+
+def test_runs_list_filters_heatmap_drilldown_query(tmp_path):
+    logbook = Logbook(tmp_path)
+    logbook.append({"id": "a", "campaign_id": "camp-1", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 0.0})
+    logbook.append({"id": "b", "campaign_id": "camp-1", "outcome": "hang", "x": 1.0, "y": 2.0, "z": 0.0})
+    logbook.append({"id": "c", "campaign_id": "camp-1", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 1.0})
+    logbook.append({"id": "d", "campaign_id": "camp-2", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 0.0})
+    app = FastAPI()
+    app.include_router(runs.router)
+    app.dependency_overrides[get_ctx] = lambda: _Context(logbook)
+
+    response = TestClient(app).get(
+        "/runs",
+        params={
+            "campaign_id": "camp-1",
+            "x": 1.0,
+            "y": 2.0,
+            "z": 0.0,
+            "outcome": "glitch",
+        },
+    )
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()] == ["a"]

@@ -17,9 +17,11 @@ from fastapi import HTTPException, Request
 from emfi_protocol.projects import FlashedFirmware
 from control.adapters.chipshouter import ChipShouterAdapter
 from control.adapters.chipshover import ChipShoverAdapter
+from control.adapters.husky import HuskyAdapter
 from control.adapters.scaffold import ScaffoldAdapter
 from control.adapters.xds110 import XDS110Adapter
 from control.audit import AuditLog, default_audit_dir
+from control.campaign_metadata import CampaignMetadataStore
 from control.config import Config
 from control.logbook import Logbook, default_log_dir
 from control.orchestrator import Orchestrator
@@ -50,11 +52,13 @@ class AppContext:
     rate_limiter: RateLimiter
     logbook: Logbook
     audit_log: AuditLog
+    campaign_metadata: CampaignMetadataStore
     workers: WorkerRegistry
     shover: ChipShoverAdapter
     shouter: ChipShouterAdapter
     scaffold: ScaffoldAdapter
     xds110: XDS110Adapter
+    husky: HuskyAdapter
     orchestrator: Orchestrator
     loop: Optional[asyncio.AbstractEventLoop] = None
     flashed_firmware: Optional[FlashedFirmware] = None
@@ -99,6 +103,7 @@ def build_context() -> AppContext:
 
     logbook = Logbook(default_log_dir())
     audit_log = AuditLog(default_audit_dir())
+    campaign_metadata = CampaignMetadataStore()
     workers = WorkerRegistry()
 
     axes = config.get("axes", default={}) or {}
@@ -110,6 +115,7 @@ def build_context() -> AppContext:
     )
     shouter = ChipShouterAdapter()
     scaffold = ScaffoldAdapter()
+    husky = HuskyAdapter()
     xds110 = XDS110Adapter(
         dslite_bin=os.environ.get("DSLITE_BIN") or config.get("programmer", "dslite_bin"),
         dslite_ccxml=config.get("programmer", "dslite_ccxml"),
@@ -126,11 +132,13 @@ def build_context() -> AppContext:
         rate_limiter=rate_limiter,
         logbook=logbook,
         audit_log=audit_log,
+        campaign_metadata=campaign_metadata,
         workers=workers,
         shover=shover,
         shouter=shouter,
         scaffold=scaffold,
         xds110=xds110,
+        husky=husky,
         orchestrator=None,  # type: ignore[arg-type]
         flashed_firmware=load_flashed_firmware(),
     )

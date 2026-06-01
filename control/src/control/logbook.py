@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS idx_runs_campaign ON runs(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_runs_outcome ON runs(outcome);
 CREATE INDEX IF NOT EXISTS idx_runs_xy ON runs(x, y);
+CREATE INDEX IF NOT EXISTS idx_runs_xyz ON runs(x, y, z);
 """
 
 
@@ -122,6 +123,10 @@ class Logbook:
         self,
         since: Optional[str] = None,
         limit: int = 500,
+        campaign_id: Optional[str] = None,
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        z: Optional[float] = None,
         outcome: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -136,6 +141,14 @@ class Logbook:
                 try:
                     obj = json.loads(line)
                 except Exception:
+                    continue
+                if campaign_id and obj.get("campaign_id") != campaign_id:
+                    continue
+                if x is not None and obj.get("x") != x:
+                    continue
+                if y is not None and obj.get("y") != y:
+                    continue
+                if z is not None and obj.get("z") != z:
                     continue
                 if outcome and obj.get("outcome") != outcome:
                     continue

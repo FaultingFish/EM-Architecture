@@ -116,3 +116,20 @@ def test_auth_rejects_missing_scope(monkeypatch):
     response = TestClient(app).post("/campaigns", headers={"Authorization": "Bearer secret"}, json={})
 
     assert response.status_code == 403
+
+
+def test_auth_metadata_update_uses_write_fallback_scope(monkeypatch):
+    monkeypatch.setenv(
+        "EMFI_AUTH_TOKENS",
+        json.dumps({"secret": {"name": "agent", "scopes": ["control:read"]}}),
+    )
+    app = create_app()
+
+    response = TestClient(app).put(
+        "/campaigns/camp-1/metadata",
+        headers={"Authorization": "Bearer secret"},
+        json={"notes": "x", "tags": []},
+    )
+
+    assert response.status_code == 403
+    assert "control:write" in response.json()["detail"]

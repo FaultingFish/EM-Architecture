@@ -37,9 +37,9 @@ Each item names the owning app(s) and a short description. Cross-app items list 
   - [x] control: use target-range delay metadata when materializing campaign delay sweeps
 - [x] **Hardware-triggered pulse via Scaffold pgen** — D0 rising edge → pgen0 (programmable delay) → A0 ChipSHOUTER trigger, all in hardware (zero USB jitter). `trigger_mode="one-shot"` wires `d0 → pgen0.start`, `pgen0.out → a0`; sweep delay/width set per attempt via `pgen0.delay`/`pgen0.width`. **(control)**
 - [x] **Stop conditions** — "stop after N glitches", "stop on first crash", "stop after X minutes". **(control orchestrator + view UI)**
-- [ ] **Heatmap drill-down** — click a hot cell → see the attempts that produced glitches, with delay/voltage/pulse-width/target-PC for each. **(view, reads existing /runs)**
-- [ ] **Heatmap parameter histogram** — `(delay_us, pulse_width_ns)` joint distribution for cells with ≥N glitches; finds sweet spots. **(view)**
-- [ ] **Campaign notes + tags** — free-text + tag per campaign; filter in the runs browser. **(control storage + view UI)**
+- [x] **Heatmap drill-down** — click a hot cell → see the attempts that produced glitches, with delay/voltage/pulse-width/target-PC for each. **(control /runs filters + view)**
+- [x] **Heatmap parameter distribution** — selected heatmap scope shows outcome counts plus a `(delay_us, pulse_width_ns)` joint distribution to help find stable timing regions. **(view)**
+- [x] **Campaign notes + tags** — durable free-text notes + tags per campaign; Runs page can edit metadata and filter loaded runs by tag. **(control storage + view UI)**
 - [ ] **CSV / Parquet export** — `GET /runs/export?format=csv|parquet&campaign=…`. **(control)**
   - [x] CSV endpoint and Runs page download
   - [ ] Parquet endpoint
@@ -57,13 +57,19 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 - [x] **Health/readiness endpoints** — add `/healthz` and `/readyz` for Control and Develop. **(control + develop)**
 - [x] **Same-origin View defaults** — make View default to `/api/control` and `/api/develop`, including WebSocket URL generation. **(view)**
 - [x] **Application auth middleware** — add scoped bearer-token auth on top of Cloudflare Access service tokens. **(control + develop)**
-- [ ] **Automation preflight endpoint** — validate devices, rails, build provenance, grid bounds, pulse budget, and safety limits before agent-launched campaigns. **(control + view)**
-  - [x] initial endpoint + view gate for device, rail, grid, pulse-budget, and safety checks
+- [x] **Automation preflight endpoint** — validate devices, build provenance, grid bounds, pulse budget, safety limits, and submitted `automation_policy` caps before agent-launched campaigns. **(control + view)**
+  - [x] initial endpoint + view gate for device, grid, pulse-budget, and safety checks
   - [x] flashed-firmware provenance and stop-condition schema checks
   - [x] durable flashed provenance across Control restarts
-  - [ ] full campaign budget policy checks beyond stop-condition schema
+  - [x] `automation_policy` hard caps for max attempts, estimated runtime, max voltage, and allowed trigger modes
 - [x] **Audit log for dangerous actions** — append operator/agent identity and request metadata for arm, pulse, motion, power, flash, and campaign start/stop. **(control)**
 - [ ] **Dual-target campaign model** — represent DUT EMFI plus platform voltage-glitch timing explicitly for ChipWhisperer Husky/crowbar experiments. **(protocol + control + view)**
+  - [x] protocol schema for `mode`, `slots`, `timing.timeline`, named `sweeps`, and `budgets`
+  - [x] Control Husky adapter/API scaffold that reports unavailable/stub status without touching hardware
+  - [ ] per-slot flashed provenance for DUT and Platform
+  - [ ] real ChipWhisperer Husky connect/configure/crowbar implementation
+  - [ ] orchestrator support for synchronized EMFI + Husky actions per attempt
+  - [ ] View dual-target campaign controls and run analysis
 
 ## Phase 2 (deferred)
 

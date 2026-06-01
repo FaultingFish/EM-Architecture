@@ -35,6 +35,19 @@ def test_logbook_read_filters_by_outcome(tmp_path):
     assert {e["id"] for e in glitches} == {"a", "c"}
 
 
+def test_logbook_read_filters_heatmap_drilldown_fields(tmp_path):
+    lb = Logbook(tmp_path)
+    lb.append({"id": "a", "campaign_id": "camp-1", "outcome": "glitch", "x": 1, "y": 2, "z": 0})
+    lb.append({"id": "b", "campaign_id": "camp-1", "outcome": "hang", "x": 1, "y": 2, "z": 0})
+    lb.append({"id": "c", "campaign_id": "camp-1", "outcome": "glitch", "x": 1, "y": 2, "z": 1})
+    lb.append({"id": "d", "campaign_id": "camp-2", "outcome": "glitch", "x": 1, "y": 2, "z": 0})
+    lb.append({"id": "e", "campaign_id": "camp-1", "outcome": "glitch", "x": 9, "y": 9, "z": 0})
+
+    rows = lb.read(campaign_id="camp-1", x=1, y=2, z=0, outcome="glitch")
+
+    assert [row["id"] for row in rows] == ["a"]
+
+
 def test_logbook_sqlite_mirror_contains_appended_rows(tmp_path):
     lb = Logbook(tmp_path)
     lb.append({"id": "a", "outcome": "glitch", "x": 1.0, "y": 2.0, "z": 0.0})

@@ -20,7 +20,7 @@ Both live on the same lab box.
 
 | Service | URL | Provides |
 |---|---|---|
-| Control | `http://10.164.9.112:8001/` | hardware state, campaigns, runs, arm gate, motion, shouter, flash. WS `/ws`: `position`, `arm`, `counter`, `attempt`, `device_status`, `campaign_progress`, `state`, `error` |
+| Control | `http://10.164.9.112:8001/` | hardware state, campaigns, campaign metadata, runs, heatmap/cell drill-down, arm gate, motion, shouter, flash. WS `/ws`: `position`, `arm`, `counter`, `attempt`, `device_status`, `campaign_progress`, `state`, `error` |
 | Develop | `http://10.164.9.112:8002/` | firmware projects, builds, disassembly, glitch-targets. WS `/ws`: `build_log`, `build_status`, `agent_output` |
 
 URLs are configurable at build time:
@@ -77,6 +77,11 @@ If you change envelope shapes in `src/lib/ws/control_ws.ts`, post in `agentConve
 | XDS110 | `/dev/ttyACM1`+`/dev/ttyACM2` | TI debug probe |
 
 You'll mostly care about these for what the user *sees* — make sure DeviceStatusCard renders all four sensibly even when one is unavailable.
+
+The Husky crowbar path is scaffolded in Control but not live hardware control
+yet. View should not present dual-target/Husky campaigns as operational until
+Control has real Husky connect/configure/pulse behavior and per-slot flashed
+provenance.
 
 ## Safety UX — non-negotiable
 

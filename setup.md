@@ -128,6 +128,7 @@ These are intentionally machine-local:
 | Control logbook and SQLite index | `~/.local/share/emfi-control/sessions/` on `em-lab` |
 | Control audit JSONL | `~/.local/share/emfi-control/audit/` on `em-lab` |
 | Last flashed DUT provenance | `~/.local/share/emfi-control/flashed_firmware.json` on `em-lab` |
+| Campaign notes/tags | `~/.local/share/emfi-control/campaign_metadata.json` on `em-lab` |
 | Develop projects and builds | `~/emfi-projects/` on `em-lab` |
 | Cloudflare tunnel credentials | `cloudflared` service config on `em-lab` |
 | App bearer tokens | environment/service config, not repo files |

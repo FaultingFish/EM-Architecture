@@ -6,7 +6,21 @@ SvelteKit apps consume the OpenAPI specs generated from FastAPI routes
 that reference these models.
 """
 
-from emfi_protocol.campaigns import Campaign, GridParams, StopConditions, SweepParams
+from emfi_protocol.campaigns import (
+    AutomationBudgetPolicy,
+    Campaign,
+    CampaignBudgets,
+    CampaignMetadata,
+    CampaignMetadataUpdate,
+    CampaignTiming,
+    GridParams,
+    SlotConfig,
+    StopConditions,
+    SweepParams,
+    SweepRange,
+    TimelineAction,
+    TimingReference,
+)
 from emfi_protocol.devices import ArmState, DeviceStatus, Position
 from emfi_protocol.projects import (
     AssemblyInstruction,
@@ -21,9 +35,18 @@ from emfi_protocol.ws_events import WsEvent, WsTopic
 
 __all__ = [
     "Campaign",
+    "AutomationBudgetPolicy",
+    "CampaignBudgets",
+    "CampaignMetadata",
+    "CampaignMetadataUpdate",
+    "CampaignTiming",
     "GridParams",
+    "SlotConfig",
     "StopConditions",
     "SweepParams",
+    "SweepRange",
+    "TimelineAction",
+    "TimingReference",
     "ArmState",
     "DeviceStatus",
     "Position",

@@ -37,7 +37,7 @@ You ──> View (8003) ──HTTP/WS──> Control (8001) ──USB──> har
 7. **Watch the live campaign view.** 3D scene tracks the stage; LogTail shows attempt outcomes as they happen; the heatmap updates.
 8. **Stop conditions**: campaign finishes naturally, you hit STOP (or Esc/Space), or auto-disarm fires after 5 minutes of inactivity.
 
-After: open `/runs` to filter by outcome, click a row to see details, or click **Replay** to re-fire that exact attempt.
+After: open `/runs` to filter by outcome or campaign, add campaign notes/tags, filter loaded runs by tag, click a row to see details, export CSV, or click **Replay** to re-fire that exact attempt. Open `/heatmap` to click a hot cell and inspect the matching attempts plus the delay/width parameter distribution for the selected campaign/Z plane.
 
 ---
 
@@ -50,6 +50,7 @@ After: open `/runs` to filter by outcome, click a row to see details, or click *
 | SQLite query index | `~/.local/share/emfi-control/sessions/index.sqlite` |
 | Dangerous-action audit log | `~/.local/share/emfi-control/audit/audit-YYYYMMDD.jsonl` |
 | Last flashed DUT provenance | `~/.local/share/emfi-control/flashed_firmware.json` |
+| Campaign notes/tags | `~/.local/share/emfi-control/campaign_metadata.json` |
 | Firmware projects | `~/emfi-projects/<project-id>/` |
 | Per-build artifacts | `~/emfi-projects/<project-id>/builds/<sha>/` |
 | Project version history | `~/emfi-projects/<project-id>/.git/` |
@@ -132,6 +133,11 @@ GlitchTarget has expected delay cycles, Control materializes `delay_us` from
 that metadata. Range targets use `expected_delay_cycles` through
 `expected_delay_cycles_end` at the build's cached `cpu_mhz`.
 
+Campaign metadata is stored separately from the append-only run log. The Runs
+page reads and updates `GET/PUT /campaigns/{campaign_id}/metadata`; notes and
+tags are annotations on the campaign id, not attempt rows. Tag filtering in
+View applies to the runs currently loaded by the outcome/campaign filters.
+
 ---
 
 ## 8. Resetting things
@@ -155,8 +161,12 @@ The following are deliberately deferred. Don't be surprised they're missing:
 - Cloud archive of JSONL
 - Persistent ARM ("always on") mode for hands-off campaigns
 - WS reconnection-with-backoff (current behavior: refresh the page)
+- Real dual-target orchestration: protocol fields and Husky stub endpoints
+  exist, but synchronized EMFI + Husky attempts, real Husky hardware control,
+  and per-slot DUT/Platform flashed provenance are not implemented yet.
 
-These live in `ARCHITECTURE.md` § "Phase 2 deferrals". File them as features if you decide they're needed.
+The Phase 2 items live in `ARCHITECTURE.md` § "Phase 2 deferrals"; dual-target
+status is tracked in `ROADMAP.md` and `docs/wiki/dual-target-campaigns.md`.
 
 ---
 

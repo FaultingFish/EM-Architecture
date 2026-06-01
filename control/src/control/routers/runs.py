@@ -49,16 +49,29 @@ CSV_FIELDS = [
 @router.get("/runs")
 async def list_runs(
     campaign: Optional[str] = Query(None),
+    campaign_id: Optional[str] = Query(
+        None,
+        description="Alias for campaign; useful for heatmap drill-down clients",
+    ),
+    x: Optional[float] = Query(None),
+    y: Optional[float] = Query(None),
+    z: Optional[float] = Query(None),
     since: Optional[str] = Query(None),
     outcome: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=10000),
     ctx: AppContext = Depends(get_ctx),
 ) -> List[Dict[str, Any]]:
     """Query the logbook (backed by SQLite mirror for speed)."""
-    entries = ctx.logbook.read(since=since, limit=limit, outcome=outcome)
-    if campaign:
-        entries = [e for e in entries if e.get("campaign_id") == campaign]
-    return entries
+    resolved_campaign = campaign_id or campaign
+    return ctx.logbook.read(
+        since=since,
+        limit=limit,
+        campaign_id=resolved_campaign,
+        x=x,
+        y=y,
+        z=z,
+        outcome=outcome,
+    )
 
 
 @router.get("/runs/export")

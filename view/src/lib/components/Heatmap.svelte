@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
 
   type Outcome = 'glitch' | 'hang' | 'crash' | 'nothing';
   type Filter = 'all' | Outcome;
@@ -13,6 +13,9 @@
   export let cells: HeatCell[] = [];
   export let width = 600;
   export let height = 400;
+  export let selectedCell: HeatCell | null = null;
+
+  const dispatch = createEventDispatcher<{ select: HeatCell }>();
 
   // Matches OUTCOME_COLORS in Scene3D so the 3D view and heatmap agree.
   const OUTCOME_COLORS: Record<Outcome, string> = {
@@ -60,10 +63,10 @@
     return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha.toFixed(3)})`;
   }
 
-  // Redraw whenever the data or the active filter changes.
-  $: if (canvas) draw(cells, filter);
+  // Redraw whenever the data, active filter, or selection changes.
+  $: if (canvas) draw(cells, filter, selectedCell);
 
-  function draw(data: HeatCell[], f: Filter) {
+  function draw(data: HeatCell[], f: Filter, activeCell: HeatCell | null) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.fillStyle = '#111';
@@ -115,6 +118,14 @@
       ctx.fillRect(px - cellW / 2, py - cellH / 2, cellW, cellH);
     }
 
+    if (activeCell) {
+      const px = pad + ((activeCell.x - minX) / rangeX) * drawW;
+      const py = pad + ((activeCell.y - minY) / rangeY) * drawH;
+      ctx.strokeStyle = '#e4e6ed';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(px - cellW / 2 - 2, py - cellH / 2 - 2, cellW + 4, cellH + 4);
+    }
+
     ctx.fillStyle = '#8b91a3';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
@@ -137,12 +148,7 @@
   let tooltipY = 0;
   let showTooltip = false;
 
-  function onMouseMove(ev: MouseEvent) {
-    if (cells.length === 0) { showTooltip = false; return; }
-    const rect = canvas.getBoundingClientRect();
-    const mx = ev.clientX - rect.left;
-    const my = ev.clientY - rect.top;
-
+  function nearestCell(mx: number, my: number, maxDistance = 20): HeatCell | null {
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const c of cells) {
       if (c.x < minX) minX = c.x;
@@ -157,13 +163,22 @@
     const drawH = height - pad * 2;
 
     let closest: HeatCell | null = null;
-    let bestDist = 20;
+    let bestDist = maxDistance;
     for (const c of cells) {
       const px = pad + ((c.x - minX) / rangeX) * drawW;
       const py = pad + ((c.y - minY) / rangeY) * drawH;
       const d = Math.hypot(mx - px, my - py);
       if (d < bestDist) { bestDist = d; closest = c; }
     }
+    return closest;
+  }
+
+  function onMouseMove(ev: MouseEvent) {
+    if (cells.length === 0) { showTooltip = false; return; }
+    const rect = canvas.getBoundingClientRect();
+    const mx = ev.clientX - rect.left;
+    const my = ev.clientY - rect.top;
+    const closest = nearestCell(mx, my);
     if (closest) {
       tooltipText =
         filter === 'all'
@@ -177,7 +192,22 @@
     }
   }
 
-  onMount(() => { draw(cells, filter); });
+  function onClick(ev: MouseEvent) {
+    if (cells.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const closest = nearestCell(ev.clientX - rect.left, ev.clientY - rect.top);
+    if (closest) dispatch('select', closest);
+  }
+
+  function onKeydown(ev: KeyboardEvent) {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      const firstCell = selectedCell ?? cells[0];
+      if (firstCell) dispatch('select', firstCell);
+    }
+  }
+
+  onMount(() => { draw(cells, filter, selectedCell); });
 </script>
 
 <div class="heatmap-wrap">
@@ -198,6 +228,11 @@
     bind:this={canvas}
     {width}
     {height}
+    role="button"
+    tabindex="0"
+    aria-label="Campaign heatmap"
+    on:click={onClick}
+    on:keydown={onKeydown}
     on:mousemove={onMouseMove}
     on:mouseleave={() => (showTooltip = false)}
   ></canvas>
@@ -211,6 +246,7 @@
 <style>
   .heatmap-wrap { position: relative; display: inline-block; }
   canvas { background: #111; border-radius: var(--radius); display: block; }
+  canvas:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
   .chips { display: flex; gap: 0.35rem; margin-bottom: 0.5rem; }
   .chip {

@@ -8,7 +8,7 @@ A three-app architecture for electromagnetic fault injection (EMFI) research aga
 |---|---|---|---|---|
 | **Control** | [`control/`](./control/) | 8001 | FastAPI + WS | Owns hardware: ChipShover (XY), ChipSHOUTER (EMFI source), Scaffold (target IO), XDS110 (programmer). Singleton — one per rig. |
 | **Develop** | [`develop/`](./develop/) | 8002 | FastAPI + SvelteKit | Firmware project management: C (TI HAL) + Rust (b01lers eCTF HAL). Builds, disassembly, glitch-target annotation, Claude Code agent generation. |
-| **View** | [`view/`](./view/) | 8003 | SvelteKit (static) | Unified dashboard: campaign config, live 3D position, heatmap, assembly viewer, logbook browser. |
+| **View** | [`view/`](./view/) | 8003 | SvelteKit (static) | Unified dashboard: campaign config, live 3D position, heatmap drill-down, assembly viewer, campaign notes/tags, logbook browser. |
 
 Plus a shared `protocol/` package with Pydantic models + generated OpenAPI specs that both Python apps import and the SvelteKit apps consume as generated TypeScript types.
 
@@ -49,6 +49,7 @@ Open `http://lab-box:8003/` in any browser on the LAN. For first-time setup foll
 - ChipSHOUTER (EMFI source, NewAE protocol)
 - Ledger Donjon Scaffold (target IO + pulse gen)
 - XDS110 (MSPM0 programmer / debugger)
+- ChipWhisperer Husky (planned Platform crowbar path; Control has only a safe stub scaffold today)
 - MSPM0L2228 (target MCU)
 
 ## Security model
