@@ -24,9 +24,10 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 - [x] **Calibration wizard** — 3-step UI flow: origin → top-right → confirm with 3D preview. **(view)**
 - [x] **Hardware status panel** — always-visible header strip with device states + ChipSHOUTER voltage/faults. **(view)**
 - [ ] **Pre-flight checklist** — campaign-start gate verifying all devices connected, firmware flashed matches build_sha, voltage in safety bounds, ARM gate behavior. **(control endpoint + view UI)**
-  - [ ] control: start-gate endpoint (device / firmware / voltage / ARM checks)
+  - [x] control: preflight endpoint for device, voltage, ARM-state, grid, and pulse-budget checks
   - [x] view: pre-submit grid/sweep estimate + small-grid warning on campaign form; calibration wizard blocks `top_right == origin`
-- [ ] **Time + cost estimator** — display total pulse count + ETA on the campaign config form before submit. **(view, reads stats from existing endpoints)**
+  - [ ] control: verify flashed firmware/build provenance against `build_sha`
+- [x] **Time + cost estimator** — display total pulse count + ETA on the campaign config form before submit. **(view, reads stats from existing endpoints)**
 - [ ] **Campaign presets** — save/reload named campaign configurations per project. **(develop storage + view picker)**
   - [x] develop: storage + REST endpoints
   - [ ] view: picker on campaign config form
@@ -52,8 +53,10 @@ Each item names the owning app(s) and a short description. Cross-app items list 
 - [x] **Cloudflare Tunnel example** — add a locally-managed `cloudflared` config with a deny-by-default ingress fallback. **(ops)**
 - [x] **Health/readiness endpoints** — add `/healthz` and `/readyz` for Control and Develop. **(control + develop)**
 - [x] **Same-origin View defaults** — make View default to `/api/control` and `/api/develop`, including WebSocket URL generation. **(view)**
-- [ ] **Application auth middleware** — add scoped bearer-token auth on top of Cloudflare Access service tokens. **(control + develop)**
+- [x] **Application auth middleware** — add scoped bearer-token auth on top of Cloudflare Access service tokens. **(control + develop)**
 - [ ] **Automation preflight endpoint** — validate devices, rails, build provenance, grid bounds, pulse budget, and safety limits before agent-launched campaigns. **(control + view)**
+  - [x] initial endpoint + view gate for device, rail, grid, pulse-budget, and safety checks
+  - [ ] flashed-firmware provenance and stop-condition policy checks
 - [ ] **Audit log for dangerous actions** — append operator/agent identity and request metadata for arm, pulse, motion, power, flash, and campaign start/stop. **(control)**
 - [ ] **Dual-target campaign model** — represent DUT EMFI plus platform voltage-glitch timing explicitly for ChipWhisperer Husky/crowbar experiments. **(protocol + control + view)**
 

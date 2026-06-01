@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from develop.auth import install_auth_middleware
 from develop.config import (
     arm_gcc_bin,
     arm_objcopy_bin,
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    install_auth_middleware(app)
 
     @app.middleware("http")
     async def request_logging(request: Request, call_next):

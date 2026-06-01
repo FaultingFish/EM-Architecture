@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from control.auth import install_auth_middleware
 from control.deps import ADAPTER_ATTR, DEVICE_NAMES, build_context
 from control.routers import (
     campaigns,
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    install_auth_middleware(app)
 
     @app.exception_handler(Disarmed)
     async def _disarmed(request: Request, exc: Disarmed) -> JSONResponse:

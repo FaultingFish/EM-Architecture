@@ -109,7 +109,7 @@ The example tunnel exposes only `emfi.ics.red` and returns `404` for all other i
 
 Before leaving the tunnel running, create a Cloudflare Zero Trust Access application for `emfi.ics.red`. Use `ops/cloudflare/access-policy.md` as the policy checklist.
 
-Minimum policy:
+Minimum human policy:
 
 ```text
 Include: lab operator identity group or named operator emails
@@ -117,7 +117,58 @@ Require: MFA
 Default: deny
 ```
 
+Minimum automation policy:
+
+```text
+Include: one Cloudflare Access service token per automation client
+Default: deny
+```
+
 Protect the whole hostname. Do not protect only `/api/control`; the View UI can issue Control commands if it is configured to talk to `/api/control`.
+
+For automation clients, Cloudflare Access is only the outer gate. The EMFI
+application bearer token is still required when bearer-token middleware is
+enabled in Control and Develop. Configure those tokens with `EMFI_AUTH_TOKENS`;
+see `docs/automation.md` for the JSON shape and recommended scopes.
+
+Example service-token request:
+
+```bash
+export EMFI_ORIGIN="https://emfi.ics.red"
+export CF_ACCESS_CLIENT_ID="service-token-client-id.access"
+export CF_ACCESS_CLIENT_SECRET="service-token-client-secret"
+export EMFI_AUTOMATION_TOKEN="replace-with-long-random-token"
+
+curl -fsS "$EMFI_ORIGIN/api/control/readyz" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  -H "Authorization: Bearer $EMFI_AUTOMATION_TOKEN"
+```
+
+If the Cloudflare Access service token is invalid, the request should fail at
+Cloudflare before it reaches Caddy. If the Access token is valid but the EMFI
+bearer token is missing or lacks scope, Control or Develop should return
+`401` or `403`.
+
+Store the JSON token config in a root-readable environment file instead of in
+the repo:
+
+```bash
+sudo install -m 0600 -o root -g root /dev/null /etc/emfi-auth.env
+sudoedit /etc/emfi-auth.env
+```
+
+Example `/etc/emfi-auth.env`:
+
+```bash
+EMFI_AUTH_TOKENS='{"replace-with-long-random-token":{"name":"campaign-agent","scopes":["control:read","target:flash","campaign:preflight","campaign:start","campaign:stop","develop:read","develop:build"]}}'
+```
+
+Then add this to both local systemd units for the remote deployment:
+
+```text
+EnvironmentFile=/etc/emfi-auth.env
+```
 
 ## Firewall
 

@@ -10,8 +10,8 @@ than raw pulse/motion endpoints wherever possible.
 Use two layers:
 
 1. Cloudflare Access protects `https://emfi.ics.red` for every caller.
-2. The EMFI APIs should grow an application-level automation token before any
-   unattended agent is allowed to start campaigns.
+2. The EMFI APIs should enforce an application-level automation token before
+   any unattended agent is allowed to start campaigns.
 
 Cloudflare Access service tokens are the right outer credential for agents.
 Create a token per automation client and send it on every request:
@@ -32,6 +32,92 @@ checked by Control and Develop. Keep separate tokens for:
 
 Do not let an AI agent use a human browser session cookie as its credential.
 
+Control and Develop bearer-token auth is opt-in for local lab development.
+When `EMFI_AUTH_TOKENS` is unset, the apps remain LAN-trust services. Before
+using unattended automation through the public hostname, set
+`EMFI_AUTH_TOKENS` for both `emfi-control` and `emfi-develop`; each service
+will ignore scopes that do not apply to it.
+
+`EMFI_AUTH_TOKENS` is a JSON object keyed by either a plain bearer token or a
+`sha256:<hex-digest>` token id. Each value is either a scope list or an object
+with `name` and `scopes`:
+
+```bash
+export EMFI_AUTH_TOKENS='{
+  "replace-with-long-random-observer-token": {
+    "name": "observer-dashboard",
+    "scopes": ["control:read", "develop:read"]
+  },
+  "replace-with-long-random-builder-token": {
+    "name": "firmware-builder",
+    "scopes": ["develop:read", "develop:write", "develop:build"]
+  },
+  "replace-with-long-random-campaign-token": {
+    "name": "campaign-agent",
+    "scopes": [
+      "control:read",
+      "target:flash",
+      "campaign:preflight",
+      "campaign:start",
+      "campaign:stop",
+      "develop:read",
+      "develop:build"
+    ]
+  },
+  "sha256:replace-with-token-sha256-hex-digest": {
+    "name": "operator-console",
+    "scopes": [
+      "control:read",
+      "control:write",
+      "devices:write",
+      "motion:write",
+      "shouter:write",
+      "safety:arm",
+      "target:flash",
+      "campaign:preflight",
+      "campaign:start",
+      "campaign:stop",
+      "develop:read",
+      "develop:write",
+      "develop:build",
+      "develop:agent"
+    ]
+  }
+}'
+```
+
+Generate token values with a CSPRNG and keep them out of git. To store only a
+hash in `EMFI_AUTH_TOKENS`, hash the token value and use the `sha256:` key:
+
+```bash
+TOKEN="$(openssl rand -base64 48)"
+printf '%s' "$TOKEN" | shasum -a 256 | awk '{print $1}'
+```
+
+Recommended initial scope mapping:
+
+| Scope | Allows |
+|---|---|
+| `control:read` | `GET /api/control/readyz`, `/arm_state`, `/config`, `/devices`, `/runs`, `/heatmap`, `/campaigns` |
+| `devices:write` | Device connect/disconnect and Scaffold power set/cycle |
+| `motion:write` | Stage motion, homing, origin, and top-right calibration |
+| `shouter:write` | Raw ChipSHOUTER config, arm/disarm, and pulse endpoints |
+| `safety:arm` | Control arm/disarm gate endpoints |
+| `target:flash` | Target flash/reset/debug attach/detach |
+| `campaign:preflight` | Campaign preflight |
+| `campaign:start` | Start campaigns and replay runs |
+| `campaign:stop` | Stop active campaigns |
+| `control:write` | Fallback for future non-GET Control routes that do not match a narrower scope |
+| `develop:read` | Project, build, artifact, disassembly, template, preset, prompt, target, and git-log reads |
+| `develop:write` | Project create/import/delete, file writes, presets, host scripts, and target annotations |
+| `develop:build` | Firmware build trigger |
+| `develop:agent` | Claude/agent endpoint and prompt routes |
+
+Require exact scopes for dangerous operations instead of treating
+`campaign:start`, `target:flash`, or `shouter:write` as aliases for broader
+operator access. The implementation also accepts `*` and prefix wildcards such
+as `campaign:*`, but public automation clients should use explicit scopes.
+
 ## Automation contract
 
 Agents should call a narrow, auditable flow:
@@ -40,7 +126,7 @@ Agents should call a narrow, auditable flow:
 2. `GET /api/develop/projects`
 3. `POST /api/develop/projects/{id}/build`
 4. `POST /api/control/target/flash`
-5. `POST /api/control/campaigns/preflight` (planned)
+5. `POST /api/control/campaigns/preflight`
 6. `POST /api/control/arm` only when a policy allows unattended arming
 7. `POST /api/control/campaigns`
 8. `GET /api/control/campaigns/{id}`
@@ -50,12 +136,92 @@ Avoid direct calls to raw hardware endpoints such as `/shouter/pulse`,
 `/motion/move_abs`, and Scaffold power routes from autonomous agents. Those
 should remain manual/operator or policy-gated endpoints.
 
+## Curl examples
+
+These examples include both layers: Cloudflare Access service-token headers and
+the EMFI application bearer token. They assume Caddy is routing
+`/api/control/*` to Control and `/api/develop/*` to Develop.
+
+```bash
+export EMFI_ORIGIN="https://emfi.ics.red"
+export CF_ACCESS_CLIENT_ID="service-token-client-id.access"
+export CF_ACCESS_CLIENT_SECRET="service-token-client-secret"
+export EMFI_AUTOMATION_TOKEN="replace-with-long-random-campaign-token"
+
+curl -fsS "$EMFI_ORIGIN/api/control/readyz" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  -H "Authorization: Bearer $EMFI_AUTOMATION_TOKEN"
+```
+
+Build firmware through Develop:
+
+```bash
+PROJECT_ID="mspm0l2228-demo"
+
+curl -fsS -X POST "$EMFI_ORIGIN/api/develop/projects/$PROJECT_ID/build" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  -H "Authorization: Bearer $EMFI_AUTOMATION_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"version":"automation-smoke"}'
+```
+
+Flash the target with a build artifact:
+
+```bash
+BUILD_SHA="replace-with-build-sha"
+
+curl -fsS -X POST "$EMFI_ORIGIN/api/control/target/flash" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  -H "Authorization: Bearer $EMFI_AUTOMATION_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data "{
+    \"build_sha\": \"$BUILD_SHA\",
+    \"elf_url\": \"$EMFI_ORIGIN/api/develop/projects/$PROJECT_ID/builds/$BUILD_SHA/firmware.elf\"
+  }"
+```
+
+Run preflight before starting a campaign:
+
+```bash
+curl -fsS -X POST "$EMFI_ORIGIN/api/control/campaigns/preflight" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  -H "Authorization: Bearer $EMFI_AUTOMATION_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data @campaign.json
+```
+
+Start a campaign only after preflight passes:
+
+```bash
+curl -fsS -X POST "$EMFI_ORIGIN/api/control/campaigns" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  -H "Authorization: Bearer $EMFI_AUTOMATION_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data @campaign.json
+```
+
+Stop a campaign on budget, timeout, or safety condition:
+
+```bash
+CAMPAIGN_ID="replace-with-campaign-id"
+
+curl -fsS -X POST "$EMFI_ORIGIN/api/control/campaigns/$CAMPAIGN_ID/stop" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  -H "Authorization: Bearer $EMFI_AUTOMATION_TOKEN"
+```
+
 ## Required API improvements before unattended attacks
 
-- Add bearer-token middleware with scopes.
-- Add `POST /campaigns/preflight` that validates hardware state, firmware
-  provenance, safety limits, grid bounds, estimated pulse count, and stop
-  conditions without starting a campaign.
+- Keep bearer-token middleware enabled on remote deployments and add focused
+  tests for malformed config, missing bearer, invalid token, and missing scope.
+- Harden `POST /campaigns/preflight` to cover firmware provenance, stop
+  conditions, and all campaign budget limits without touching hardware.
 - Add campaign budgets: max attempts, max runtime, max voltage, max pulse rate,
   allowed trigger modes, allowed rails.
 - Add required campaign metadata: operator/agent id, objective, target board,

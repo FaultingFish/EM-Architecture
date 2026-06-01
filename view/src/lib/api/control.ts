@@ -60,6 +60,37 @@ export async function startCampaign(body: unknown) {
   return request('POST', '/campaigns', body);
 }
 
+export interface CampaignPreflightCheck {
+  name?: string;
+  label?: string;
+  status?: string;
+  severity?: string;
+  ok?: boolean;
+  message?: string;
+}
+
+export interface CampaignPreflightResult {
+  ok?: boolean;
+  status?: string;
+  summary?: string;
+  message?: string;
+  detail?: unknown;
+  checks?: CampaignPreflightCheck[];
+  blockers?: unknown[];
+  warnings?: unknown[];
+  errors?: unknown[];
+  total_attempts?: number;
+  grid_points?: number;
+  sweep_points?: number;
+  required_devices?: string[];
+  estimates?: Record<string, unknown>;
+  estimated_seconds?: number;
+}
+
+export async function preflightCampaign(body: unknown): Promise<CampaignPreflightResult> {
+  return request('POST', '/campaigns/preflight', body);
+}
+
 export async function listRuns(params: Record<string, string> = {}) {
   const qs = new URLSearchParams(params).toString();
   return request('GET', `/runs?${qs}`);

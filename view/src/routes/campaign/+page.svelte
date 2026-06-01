@@ -4,9 +4,17 @@
   import SweepConfig from '$lib/components/SweepConfig.svelte';
   import GridConfig from '$lib/components/GridConfig.svelte';
   import { listProjects } from '$lib/api/develop';
-  import { startCampaign, ApiError } from '$lib/api/control';
+  import { startCampaign, preflightCampaign, ApiError } from '$lib/api/control';
   import { toasts } from '$lib/stores/toast';
   import { onMount } from 'svelte';
+
+  type PreflightState = 'idle' | 'running' | 'pass' | 'warn' | 'fail' | 'unavailable';
+
+  interface DisplayCheck {
+    label: string;
+    status: 'pass' | 'warn' | 'fail' | 'unknown';
+    message: string;
+  }
 
   let projects: any[] = [];
   let selectedProject = '';
@@ -15,6 +23,10 @@
   let loading = false;
   let showAdvanced = false;
   let showPreview = false;
+  let preflightState: PreflightState = 'idle';
+  let preflightMessage = 'Run preflight before start to check Control readiness.';
+  let preflightChecks: DisplayCheck[] = [];
+  let lastPreflightKey = '';
 
   let triggerMode = 'software';
   let shouterVoltage = 250;
@@ -95,7 +107,7 @@
   $: smallGridBlocked = gridPts < 4 && !gridAck;
 
   $: formComplete = campaignName.trim() !== '' && selectedProject !== '';
-  $: canSubmit = formComplete && !smallGridBlocked;
+  $: canSubmit = formComplete && !smallGridBlocked && preflightState !== 'fail';
 
   function buildBody(): Record<string, unknown> {
     const body: Record<string, unknown> = {
@@ -126,15 +138,185 @@
     return body;
   }
 
-  $: previewJson = canSubmit ? JSON.stringify(buildBody(), null, 2) : '{}';
+  $: previewJson = formComplete && !smallGridBlocked ? JSON.stringify(buildBody(), null, 2) : '{}';
+  $: preflightKey = formComplete ? JSON.stringify(buildBody()) : '';
+  $: if (
+    lastPreflightKey &&
+    preflightKey !== lastPreflightKey &&
+    preflightState !== 'running'
+  ) {
+    preflightState = 'idle';
+    preflightMessage = 'Campaign inputs changed. Run preflight again before start.';
+    preflightChecks = [];
+    lastPreflightKey = '';
+  }
+
+  function textList(value: unknown): string[] {
+    if (Array.isArray(value)) return value.map((v) => String(v));
+    if (typeof value === 'string') return [value];
+    return [];
+  }
+
+  function detailText(detail: unknown): string {
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((entry: any) => {
+          const loc = Array.isArray(entry?.loc)
+            ? entry.loc.filter((s: unknown) => s !== 'body').join('.')
+            : '';
+          const msg = entry?.msg ?? entry?.message ?? String(entry);
+          return loc ? `${loc}: ${msg}` : String(msg);
+        })
+        .join('; ');
+    }
+    if (detail && typeof detail === 'object') {
+      const maybeMessage = (detail as any).message ?? (detail as any).msg;
+      if (maybeMessage) return String(maybeMessage);
+    }
+    return '';
+  }
+
+  function checkStatus(check: any): DisplayCheck['status'] {
+    const raw = String(check?.status ?? check?.severity ?? '').toLowerCase();
+    if (check?.ok === false || ['fail', 'failed', 'error', 'blocked'].includes(raw)) return 'fail';
+    if (['warn', 'warning'].includes(raw)) return 'warn';
+    if (check?.ok === true || ['pass', 'passed', 'ok', 'success'].includes(raw)) return 'pass';
+    return 'unknown';
+  }
+
+  function normalizeChecks(result: any): DisplayCheck[] {
+    const checks = Array.isArray(result?.checks) ? result.checks : [];
+    const normalized = checks.slice(0, 6).map((check: any) => ({
+      label: String(check?.label ?? check?.name ?? 'Check'),
+      status: checkStatus(check),
+      message: String(check?.message ?? check?.summary ?? check?.status ?? '')
+    }));
+
+    if (normalized.length > 0) return normalized;
+
+    const blockers = textList(result?.blockers);
+    const warnings = textList(result?.warnings);
+    const generated: DisplayCheck[] = [
+      ...blockers.map((message) => ({ label: 'Blocker', status: 'fail' as const, message })),
+      ...warnings.map((message) => ({ label: 'Warning', status: 'warn' as const, message }))
+    ];
+
+    if (typeof result?.grid_points === 'number') {
+      generated.push({
+        label: 'Grid points',
+        status: 'pass',
+        message: String(result.grid_points)
+      });
+    }
+    if (typeof result?.sweep_points === 'number') {
+      generated.push({
+        label: 'Sweep points',
+        status: 'pass',
+        message: String(result.sweep_points)
+      });
+    }
+
+    return generated.slice(0, 8);
+  }
+
+  function applyPreflightResult(result: any): PreflightState {
+    const status = String(result?.status ?? '').toLowerCase();
+    const warnings = textList(result?.warnings);
+    const blockers = textList(result?.blockers);
+    const errors = [...textList(result?.errors), ...blockers];
+    const checks = normalizeChecks(result);
+    const hasFailedCheck = checks.some((check) => check.status === 'fail');
+    const hasWarnCheck = checks.some((check) => check.status === 'warn');
+    let nextState: PreflightState;
+
+    if (
+      result?.ok === false ||
+      errors.length > 0 ||
+      hasFailedCheck ||
+      ['fail', 'failed', 'error', 'blocked'].includes(status)
+    ) {
+      nextState = 'fail';
+    } else if (warnings.length > 0 || hasWarnCheck || ['warn', 'warning'].includes(status)) {
+      nextState = 'warn';
+    } else {
+      nextState = 'pass';
+    }
+
+    preflightState = nextState;
+    const estimateSeconds =
+      typeof result?.estimated_seconds === 'number'
+        ? result.estimated_seconds
+        : result?.estimates?.min_runtime_seconds_at_rate_limit;
+    const estimate =
+      typeof result?.total_attempts === 'number'
+        ? ` ${result.total_attempts} attempts${typeof estimateSeconds === 'number' ? `, ~${Math.ceil(estimateSeconds)}s minimum` : ''}.`
+        : '';
+    preflightMessage =
+      String(result?.summary ?? result?.message ?? errors[0] ?? warnings[0] ?? 'Control preflight passed.') +
+      estimate;
+    preflightChecks = checks;
+    lastPreflightKey = preflightKey;
+    return nextState;
+  }
+
+  function applyPreflightError(err: unknown) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
+      preflightState = 'unavailable';
+      preflightMessage = 'Control does not expose POST /campaigns/preflight yet.';
+      preflightChecks = [];
+      lastPreflightKey = preflightKey;
+      return true;
+    }
+
+    if (err instanceof ApiError) {
+      preflightState = 'fail';
+      preflightMessage = detailText(err.body?.detail) || `Control preflight failed: ${err.status}`;
+      preflightChecks = [];
+      lastPreflightKey = preflightKey;
+      return false;
+    }
+
+    preflightState = 'unavailable';
+    preflightMessage = 'Could not reach Control preflight.';
+    preflightChecks = [];
+    lastPreflightKey = preflightKey;
+    return true;
+  }
+
+  async function runPreflight(): Promise<boolean> {
+    if (!formComplete) {
+      preflightState = 'fail';
+      preflightMessage = 'Fill in name and select a project before preflight.';
+      preflightChecks = [];
+      return false;
+    }
+
+    preflightState = 'running';
+    preflightMessage = 'Checking Control preflight...';
+    preflightChecks = [];
+    try {
+      const result = await preflightCampaign(buildBody());
+      const resultState = applyPreflightResult(result);
+      return resultState !== 'fail';
+    } catch (err) {
+      return applyPreflightError(err);
+    }
+  }
 
   async function submit() {
     if (!canSubmit) return;
     loading = true;
     try {
+      const preflightOk = await runPreflight();
+      if (!preflightOk) {
+        toasts.error('Resolve preflight before starting campaign');
+        return;
+      }
       const result = await startCampaign(buildBody());
       toasts.info('Campaign started');
-      if (result?.id) goto(`/campaign/${result.id}`);
+      const campaignId = result?.campaign_id ?? result?.id;
+      if (campaignId) goto(`/campaign/${campaignId}`);
     } catch (err) {
       if (err instanceof ApiError && err.body?.detail) {
         if (Array.isArray(err.body.detail)) {
@@ -192,11 +374,37 @@
       <GridConfig bind:value={grid} />
 
       <div class="panel preflight" class:warn={smallGridBlocked}>
-        <h3>Pre-flight</h3>
+        <div class="preflight-head">
+          <h3>Pre-flight</h3>
+          <span class="preflight-pill {preflightState}">
+            {preflightState === 'running' ? 'checking' : preflightState}
+          </span>
+        </div>
         <div class="preflight-lines">
           <div>Grid: {xSteps} × {ySteps} × {zSteps} = <b>{gridPts}</b></div>
           <div>Sweep: {sweepCount} combos × {attempts} attempts</div>
           <div>Total: <b>{totalAttempts}</b> attempts (~{estSeconds}s)</div>
+        </div>
+        <div class="preflight-status {preflightState}">
+          <p>{preflightMessage}</p>
+          {#if preflightChecks.length > 0}
+            <ul>
+              {#each preflightChecks as check}
+                <li class={check.status}>
+                  <span>{check.label}</span>
+                  {#if check.message}<small>{check.message}</small>{/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          <button
+            type="button"
+            class="preflight-run"
+            on:click={runPreflight}
+            disabled={!formComplete || smallGridBlocked || preflightState === 'running' || loading}
+          >
+            {preflightState === 'running' ? 'Checking...' : 'Run Preflight'}
+          </button>
         </div>
         {#if smallGridBlocked}
           <div class="preflight-warn">
@@ -316,6 +524,28 @@
   .hint { color: var(--muted); font-size: 11px; margin-top: 0.25rem; }
 
   .preflight.warn { border: 1px solid var(--warn); }
+  .preflight-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.45rem;
+  }
+  .preflight-head h3 { margin: 0; }
+  .preflight-pill {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1;
+    padding: 0.25rem 0.45rem;
+    text-transform: uppercase;
+  }
+  .preflight-pill.pass { border-color: var(--ok); color: var(--ok); }
+  .preflight-pill.warn,
+  .preflight-pill.unavailable { border-color: var(--warn); color: var(--warn); }
+  .preflight-pill.fail { border-color: var(--err); color: var(--err); }
   .preflight-lines {
     font-family: var(--mono);
     font-size: 12px;
@@ -325,6 +555,53 @@
     gap: 0.2rem;
   }
   .preflight-lines b { color: var(--accent); }
+  .preflight-status {
+    margin-top: 0.65rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.55rem;
+  }
+  .preflight-status p {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 0 0 0.5rem;
+  }
+  .preflight-status.pass p { color: var(--ok); }
+  .preflight-status.warn p,
+  .preflight-status.unavailable p { color: var(--warn); }
+  .preflight-status.fail p { color: var(--err); }
+  .preflight-status ul {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0 0 0.55rem;
+    padding: 0;
+    list-style: none;
+  }
+  .preflight-status li {
+    display: grid;
+    grid-template-columns: minmax(8rem, 0.8fr) 1fr;
+    gap: 0.5rem;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .preflight-status li.pass span { color: var(--ok); }
+  .preflight-status li.warn span { color: var(--warn); }
+  .preflight-status li.fail span { color: var(--err); }
+  .preflight-status li small {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .preflight-run {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0.35rem 0.6rem;
+  }
+  .preflight-run:hover:not(:disabled) { border-color: var(--accent); }
+  .preflight-run:disabled { cursor: not-allowed; opacity: 0.45; }
   .preflight-warn {
     margin-top: 0.6rem;
     padding-top: 0.5rem;
