@@ -586,8 +586,14 @@ async def test_run_campaign_stops_when_runtime_limit_reached(tmp_path, monkeypat
 
     import control.orchestrator as mod
 
-    ticks = iter([100.0, 101.0])
-    monkeypatch.setattr(mod.time, "monotonic", lambda: next(ticks, 101.0))
+    tick = 100.0
+
+    def fake_monotonic() -> float:
+        nonlocal tick
+        tick += 1.0
+        return tick
+
+    monkeypatch.setattr(mod.time, "monotonic", fake_monotonic)
 
     campaign = {
         "id": "stop-runtime", "name": "test", "project_id": "_test",
