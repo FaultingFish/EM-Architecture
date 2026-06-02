@@ -31,6 +31,7 @@ class AD2Adapter(BaseAdapter):
         self._lock = threading.RLock()
         self._last_error: Optional[str] = None
         self._sample_rate_hz = 2_000_000.0
+        self._digital_sample_rate_hz = 2_000_000.0
         self._samples = 1200
         self._analog_range_v = 5.0
         self._available = False
@@ -159,6 +160,7 @@ class AD2Adapter(BaseAdapter):
                 "connected": self.connected,
                 "timestamp": started_at,
                 "sample_rate_hz": sample_rate,
+                "digital_sample_rate_hz": self._digital_sample_rate_hz,
                 "samples": count,
                 "duration_s": count / sample_rate,
                 "analog_range_v": self._analog_range_v,
@@ -177,6 +179,7 @@ class AD2Adapter(BaseAdapter):
             {
                 "available": self.available,
                 "sample_rate_hz": self._sample_rate_hz,
+                "digital_sample_rate_hz": self._digital_sample_rate_hz,
                 "samples": self._samples,
                 "analog_range_v": self._analog_range_v,
                 "mapping": {
@@ -228,7 +231,8 @@ class AD2Adapter(BaseAdapter):
             ctypes.POINTER(ctypes.c_double),
             ctypes.c_int,
         ]
-        self._dwf.FDwfDigitalInFrequencySet.argtypes = [ctypes.c_int, ctypes.c_double]
+        self._dwf.FDwfDigitalInInternalClockInfo.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+        self._dwf.FDwfDigitalInDividerSet.argtypes = [ctypes.c_int, ctypes.c_uint]
         self._dwf.FDwfDigitalInBufferSizeSet.argtypes = [ctypes.c_int, ctypes.c_int]
         self._dwf.FDwfDigitalInSampleFormatSet.argtypes = [ctypes.c_int, ctypes.c_int]
         self._dwf.FDwfDigitalInConfigure.argtypes = [ctypes.c_int, ctypes.c_bool, ctypes.c_bool]
@@ -241,7 +245,11 @@ class AD2Adapter(BaseAdapter):
         self._dwf.FDwfAnalogInChannelRangeSet(self._hdwf, ctypes.c_int(0), ctypes.c_double(self._analog_range_v))
         self._dwf.FDwfAnalogInFrequencySet(self._hdwf, ctypes.c_double(self._sample_rate_hz))
         self._dwf.FDwfAnalogInBufferSizeSet(self._hdwf, ctypes.c_int(self._samples))
-        self._dwf.FDwfDigitalInFrequencySet(self._hdwf, ctypes.c_double(self._sample_rate_hz))
+        digital_clock_hz = ctypes.c_double(100_000_000.0)
+        self._dwf.FDwfDigitalInInternalClockInfo(self._hdwf, ctypes.byref(digital_clock_hz))
+        divider = max(1, int(round(digital_clock_hz.value / self._sample_rate_hz)))
+        self._digital_sample_rate_hz = digital_clock_hz.value / divider
+        self._dwf.FDwfDigitalInDividerSet(self._hdwf, ctypes.c_uint(divider))
         self._dwf.FDwfDigitalInBufferSizeSet(self._hdwf, ctypes.c_int(self._samples))
         self._dwf.FDwfDigitalInSampleFormatSet(self._hdwf, ctypes.c_int(16))
 
