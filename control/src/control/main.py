@@ -72,9 +72,10 @@ def setup_logging() -> Path:
 
 def _auto_connect(ctx) -> None:
     """Connect devices that have a pinned port override in config."""
-    from control.deps import AppContext
     overrides = ctx.config.get("ports", default={})
     for device_name in DEVICE_NAMES:
+        if device_name == "ad2":
+            continue
         port = overrides.get(f"{device_name}_override")
         if not port:
             continue
@@ -114,7 +115,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         LOGGER.info("Control shutting down")
         ctx.stop_flag.set()
-        for adapter in (ctx.shover, ctx.shouter, ctx.scaffold, ctx.xds110):
+        if ctx.ad2_stream_task is not None:
+            ctx.ad2_stream_task.cancel()
+        for adapter in (ctx.shover, ctx.shouter, ctx.scaffold, ctx.xds110, ctx.ad2):
             try:
                 adapter.disconnect()
             except Exception:

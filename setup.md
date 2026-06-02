@@ -145,7 +145,27 @@ only SSH keys and local editor/tool config need to move.
 - `view/npm run check` and `view/npm run build` pass.
 - `https://emfi.ics.red/` loads through Cloudflare Access.
 - `https://emfi.ics.red/api/control/healthz` and
-  `https://emfi.ics.red/api/develop/healthz` return healthy responses after
+`https://emfi.ics.red/api/develop/healthz` return healthy responses after
   authentication.
 - [`ROADMAP.md`](./ROADMAP.md) and [`docs/wiki/index.md`](./docs/wiki/index.md)
   are updated with any feature work done during the move.
+
+## 9. AD2 dashboard capture notes
+
+The dashboard scope panel can stream from a Digilent Analog Discovery 2 when the
+lab computer owns the USB device. Install Digilent WaveForms on the lab host so
+`libdwf.so` is present; Control uses that runtime directly through `ctypes`.
+
+Current wiring convention:
+
+| Dashboard trace | AD2 input | Rig signal |
+|---|---|---|
+| CH3 PULSE | Scope CH1 | ChipSHOUTER voltage monitor |
+| CH2 TRIG | DIO0 | Ledger trigger/reference |
+| CH1 CLK | DIO1 | Ledger-generated board clock |
+| Optional markers | DIO2/DIO3 | Exposed status, UART, or firmware markers |
+
+Control endpoints are `/devices/ad2/status`, `/devices/ad2/connect`,
+`/devices/ad2/capture`, `/devices/ad2/start_stream`, and
+`/devices/ad2/stop_stream`. View auto-starts the stream when the dashboard
+loads and falls back to the synthetic timing trace if the AD2 is not available.

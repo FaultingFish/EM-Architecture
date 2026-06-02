@@ -19,6 +19,7 @@
     chipshouter: 'ChipSHOUTER',
     scaffold: 'Scaffold',
     xds110: 'XDS110',
+    ad2: 'AD2',
   };
 
   $: statusLights = KNOWN_DEVICES.map((n) => $devicesStore.get(n) ?? placeholderStatus(n));

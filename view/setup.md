@@ -20,7 +20,7 @@ Both live on the same lab box.
 
 | Service | URL | Provides |
 |---|---|---|
-| Control | `http://10.164.9.112:8001/` | hardware state, campaigns, campaign metadata, runs, heatmap/cell drill-down, arm gate, motion, shouter, flash. WS `/ws`: `position`, `arm`, `counter`, `attempt`, `device_status`, `campaign_progress`, `state`, `error` |
+| Control | `http://10.164.9.112:8001/` | hardware state, campaigns, campaign metadata, runs, heatmap/cell drill-down, arm gate, motion, shouter, flash, AD2 capture. WS `/ws`: `position`, `arm`, `counter`, `attempt`, `ad2_capture`, `device_status`, `campaign_progress`, `state`, `error` |
 | Develop | `http://10.164.9.112:8002/` | firmware projects, builds, disassembly, glitch-targets. WS `/ws`: `build_log`, `build_status`, `agent_output` |
 
 URLs are configurable at build time:
@@ -75,8 +75,13 @@ If you change envelope shapes in `src/lib/ws/control_ws.ts`, post in `agentConve
 | ChipSHOUTER | `/dev/ttyUSB1` | NewAE, id `5LY0MB:2.0.3`, disarmed |
 | Scaffold | `/dev/ttyUSB0` | Ledger, fw 0.9 |
 | XDS110 | `/dev/ttyACM1`+`/dev/ttyACM2` | TI debug probe |
+| AD2 | USB WaveForms/libdwf | Dashboard scope capture: Scope CH1 pulse monitor, DIO0 trigger/ref, DIO1 ledger clock |
 
-You'll mostly care about these for what the user *sees* — make sure DeviceStatusCard renders all four sensibly even when one is unavailable.
+You'll mostly care about these for what the user *sees* — make sure DeviceStatusCard renders every listed device sensibly even when one is unavailable.
+
+The scope panel auto-starts `/devices/ad2/start_stream` and renders live AD2
+samples when Control emits `ad2_capture`. If the AD2 or WaveForms runtime is
+missing, it keeps the synthetic timing trace visible and reports AD2 as waiting.
 
 The Husky crowbar path is scaffolded in Control but not live hardware control
 yet. View should not present dual-target/Husky campaigns as operational until

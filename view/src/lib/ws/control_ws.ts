@@ -1,6 +1,7 @@
 import { createLogger } from '../logger';
 import { CONTROL_URL, wsUrl } from '../config';
 import { armStore } from '../stores/arm';
+import { ad2CaptureStore } from '../stores/ad2';
 import { activeCampaign } from '../stores/campaign';
 import { countersStore } from '../stores/counters';
 import { devicesStore, type DeviceStatus } from '../stores/devices';
@@ -79,6 +80,9 @@ export function connect(): WebSocket {
           next.set(d.name, d);
           return next;
         });
+        break;
+      case 'ad2_capture':
+        ad2CaptureStore.set(msg.payload);
         break;
       case 'campaign_progress': {
         log.debug('campaign progress', msg.payload);

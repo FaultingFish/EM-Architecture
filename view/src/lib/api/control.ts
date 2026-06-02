@@ -196,3 +196,23 @@ export async function scaffoldPowerSet(rail: ScaffoldRail, on: boolean): Promise
 export async function scaffoldPowerCycle(rail: ScaffoldRail, off_time = 0.05): Promise<ScaffoldPowerState> {
   return request('POST', '/devices/scaffold/power_cycle', { rail, off_time });
 }
+
+export async function ad2Status() {
+  return request('GET', '/devices/ad2/status');
+}
+
+export async function ad2Connect() {
+  return request('POST', '/devices/ad2/connect');
+}
+
+export async function ad2Capture() {
+  return request('GET', '/devices/ad2/capture');
+}
+
+export async function ad2StartStream(period_s = 0.5) {
+  return request('POST', '/devices/ad2/start_stream', { period_s });
+}
+
+export async function ad2StopStream() {
+  return request('POST', '/devices/ad2/stop_stream');
+}

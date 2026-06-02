@@ -32,6 +32,7 @@ Probed read-only on 2026-05-27 and confirmed responsive. All paths are **pinned*
 | ChipSHOUTER | `/dev/ttyUSB1` | `0403:6015` | `NewAE` / `ChipSHOUTER Serial` | id `5LY0MB:2.0.3`, **disarmed**, set V=500 / measured=21, no faults |
 | Scaffold | `/dev/ttyUSB0` | `0403:6014` | `Ledger` / `Scaffold` (firmware 0.9) | DUT power = 0 |
 | XDS110 | `/dev/ttyACM1` + `/dev/ttyACM2` | `0451:bef3` | TI XDS110 (serial `M4321005`, CMSIS-DAP) | enumerated; talked to via dslite/openocd over libusb, **not** via the ttyACM nodes |
+| AD2 | USB libdwf | `0403:6014` | Digilent Analog Discovery 2 | dashboard capture: Scope CH1 pulse monitor, DIO0 trigger/ref, DIO1 ledger clock |
 
 **Two things diverge from the original config defaults** (the classifier in `DEFAULTS` was tuned to the previous rig):
 - ChipShover here runs **Marlin** firmware, not Smoothie. The `chipshover` PyPI library handles both.
@@ -46,6 +47,9 @@ These caused real install failures and are worth a comment in any future install
 - **`chipshover` PyPI tarball is malformed.** Install from git: `pip install "chipshover @ git+https://github.com/newaetech/ChipShover-Python.git"`.
 - **`chipshouter` has an undeclared `six` dependency.** `pip install six` after.
 - **`donjon-scaffold` is fine from PyPI** (0.9.5 installed, chain module is available).
+- **AD2 needs Digilent WaveForms.** Control imports no Python AD2 package; it
+  loads `libdwf.so` directly. Install the WaveForms Debian package on any lab
+  host that physically owns the AD2.
 
 ## Safety contract — non-negotiable
 
@@ -96,6 +100,7 @@ Hardware-touching tests carry `@pytest.mark.hw` and are skipped by default; run 
 | `src/control/adapters/*.py` | Wrap the upstream libs. Each call runs inside a `DeviceWorker` |
 | `src/control/adapters/xds110.py` | UniFlash for `flash()`, OpenOCD for `attach_debugger()` |
 | `src/control/adapters/husky.py` | Stub ChipWhisperer Husky crowbar surface; not real hardware control yet |
+| `src/control/adapters/ad2.py` | Digilent WaveForms capture for dashboard pulse/trigger/clock traces |
 | `src/control/audit.py` | Append-only dangerous-action audit JSONL |
 | `src/control/campaign_metadata.py` | Durable campaign notes/tags keyed by campaign id |
 | `src/control/provenance.py` | Durable Control-side records such as last flashed DUT build |

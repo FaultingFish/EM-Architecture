@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,7 +31,7 @@ def _device_status(ctx: AppContext, name: str) -> Dict[str, Any]:
     ds = ctx.state.devices.get(name)
     status: Dict[str, Any] = {
         "name": name,
-        "available": True,
+        "available": getattr(adapter, "available", True),
         "connected": adapter.connected,
         "port": getattr(adapter, "_port", None),
         "label": ds.label if ds else None,
@@ -88,6 +89,16 @@ class _HuskyConfigureRequest(BaseModel):
     delay_us: float = Field(..., ge=0.0)
     width_ns: float = Field(..., gt=0.0)
     output: str = Field("crowbar", min_length=1)
+
+
+class _AD2ConfigureRequest(BaseModel):
+    sample_rate_hz: float | None = Field(None, gt=0)
+    samples: int | None = Field(None, ge=64, le=8192)
+    analog_range_v: float | None = Field(None, gt=0)
+
+
+class _AD2StreamRequest(BaseModel):
+    period_s: float = Field(0.5, ge=0.1, le=5.0)
 
 
 def _broadcast_power(ctx: AppContext, state: Dict[str, bool]) -> None:
@@ -172,6 +183,62 @@ async def husky_crowbar_pulse(ctx: AppContext = Depends(get_ctx)) -> Dict[str, A
     return await call_subprocess_adapter(ctx.husky.crowbar_pulse)
 
 
+@router.get("/ad2/status")
+async def ad2_status(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    return ctx.ad2.status()
+
+
+@router.post("/ad2/configure")
+async def ad2_configure(req: _AD2ConfigureRequest, ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    status = await call_subprocess_adapter(
+        ctx.ad2.configure,
+        sample_rate_hz=req.sample_rate_hz,
+        samples=req.samples,
+        analog_range_v=req.analog_range_v,
+    )
+    ctx.broadcast("device_status", _device_status(ctx, "ad2"))
+    return status
+
+
+@router.get("/ad2/capture")
+async def ad2_capture(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    capture = await call_subprocess_adapter(ctx.ad2.capture)
+    ctx.broadcast("ad2_capture", capture)
+    return capture
+
+
+@router.post("/ad2/start_stream")
+async def ad2_start_stream(req: _AD2StreamRequest, ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    if ctx.ad2_stream_task is not None and not ctx.ad2_stream_task.done():
+        return {"streaming": True, "period_s": req.period_s}
+
+    async def _stream() -> None:
+        while True:
+            try:
+                capture = await call_subprocess_adapter(ctx.ad2.capture)
+                ctx.broadcast("ad2_capture", capture)
+                ctx.broadcast("device_status", _device_status(ctx, "ad2"))
+            except Exception as exc:
+                ds = ctx.state.devices.get("ad2")
+                if ds:
+                    ds.connected = ctx.ad2.connected
+                    ds.last_error = str(exc)
+                ctx.broadcast("device_status", _device_status(ctx, "ad2"))
+                LOGGER.warning("AD2 stream capture failed: %s", exc)
+            await asyncio.sleep(req.period_s)
+
+    ctx.ad2_stream_task = asyncio.create_task(_stream())
+    return {"streaming": True, "period_s": req.period_s}
+
+
+@router.post("/ad2/stop_stream")
+async def ad2_stop_stream(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
+    if ctx.ad2_stream_task is not None:
+        ctx.ad2_stream_task.cancel()
+        ctx.ad2_stream_task = None
+    return {"streaming": False}
+
+
 @router.post("/{name}/connect")
 async def connect(name: str, ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
     """Open the serial port for a device."""
@@ -179,6 +246,18 @@ async def connect(name: str, ctx: AppContext = Depends(get_ctx)) -> Dict[str, An
         raise HTTPException(status_code=404, detail=f"Unknown device: {name}")
 
     adapter = ctx.adapter_for(name)
+    if name == "ad2":
+        await call_subprocess_adapter(adapter.connect)
+        ds = ctx.state.devices.get(name)
+        if ds:
+            ds.connected = True
+            ds.port = None
+            ds.last_error = None
+        status = _device_status(ctx, name)
+        ctx.broadcast("device_status", status)
+        LOGGER.info("Device %s connected", name)
+        return status
+
     known = ctx.config.get("known_devices", default={})
     overrides = ctx.config.get("ports", default={})
     ports = list_ports(known)
@@ -209,7 +288,7 @@ async def disconnect(name: str, ctx: AppContext = Depends(get_ctx)) -> Dict[str,
 
     adapter = ctx.adapter_for(name)
 
-    if name == "xds110":
+    if name in ("xds110", "ad2"):
         await call_subprocess_adapter(adapter.disconnect)
     else:
         worker = ctx.workers.get(name)

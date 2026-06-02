@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { ad2Capture, ad2Connect, ad2StartStream, ad2StopStream } from '$lib/api/control';
+  import { ad2CaptureStore, type AD2Channel } from '$lib/stores/ad2';
   import { logStore } from '$lib/stores/log';
   import { activeCampaign } from '$lib/stores/campaign';
 
@@ -20,6 +23,9 @@
   };
 
   let showConfig = false;
+  let ad2Busy = false;
+  let ad2Streaming = false;
+  let ad2Error = '';
   let targetId = 'target';
   let instructions: Instruction[] = [
     { id: 'trigger', name: 'TRIG', mnemonic: 'str r0,[r1]', color: 'var(--scope-cyan)', t0: 96, t1: 150 },
@@ -71,6 +77,44 @@
     return points.join(' ');
   }
 
+  function channelValues(channel: AD2Channel | undefined) {
+    return channel?.values?.length ? channel.values : null;
+  }
+
+  function analogPoints(values: number[] | null, midY: number, spanY: number, fallback: string) {
+    if (!values || values.length < 2) return fallback;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const scale = max - min || 1;
+    return values
+      .map((value, i) => {
+        const px = (i / (values.length - 1)) * 100;
+        const normalized = (value - min) / scale;
+        const py = midY + spanY / 2 - normalized * spanY;
+        return `${px.toFixed(2)},${py.toFixed(2)}`;
+      })
+      .join(' ');
+  }
+
+  function digitalPoints(values: number[] | null, lowY: number, highY: number, fallback: string) {
+    if (!values || values.length < 2) return fallback;
+    const points: string[] = [];
+    values.forEach((value, i) => {
+      const px = (i / (values.length - 1)) * 100;
+      const py = value ? highY : lowY;
+      if (i > 0) {
+        const prevY = values[i - 1] ? highY : lowY;
+        points.push(`${px.toFixed(2)},${prevY}`);
+      }
+      points.push(`${px.toFixed(2)},${py}`);
+    });
+    return points.join(' ');
+  }
+
+  function pulseFillPoints(points: string) {
+    return `${points} 100,20 0,20`;
+  }
+
   function colorValue(color: string) {
     if (color.includes('cyan')) return '#2ed3c6';
     if (color.includes('green')) return '#2bd576';
@@ -83,10 +127,47 @@
     instructions = instructions.map((item) => item.id === id ? { ...item, [field]: value } : item);
   }
 
+  async function runAD2(action: 'connect' | 'capture' | 'start' | 'stop') {
+    ad2Busy = true;
+    ad2Error = '';
+    try {
+      if (action === 'connect') await ad2Connect();
+      if (action === 'capture') await ad2Capture();
+      if (action === 'start') {
+        await ad2Connect();
+        await ad2StartStream(0.5);
+        ad2Streaming = true;
+      }
+      if (action === 'stop') {
+        await ad2StopStream();
+        ad2Streaming = false;
+      }
+    } catch (err) {
+      ad2Error = err instanceof Error ? err.message : String(err);
+    } finally {
+      ad2Busy = false;
+    }
+  }
+
+  onMount(() => {
+    void runAD2('start');
+  });
+
   $: latest = $logStore[$logStore.length - 1] as Record<string, unknown> | undefined;
   $: delayNs = readDelayNs(latest);
   $: glitchNs = triggerNs + delayNs;
-  $: running = Boolean($activeCampaign?.active);
+  $: ad2CaptureData = $ad2CaptureStore;
+  $: pulseValues = channelValues(ad2CaptureData?.channels?.pulse);
+  $: triggerValues = channelValues(ad2CaptureData?.channels?.trigger);
+  $: clockValues = channelValues(ad2CaptureData?.channels?.clock);
+  $: hasLiveCapture = Boolean(ad2CaptureData?.connected && pulseValues);
+  $: captureAgeS = ad2CaptureData?.timestamp ? Math.max(0, Date.now() / 1000 - ad2CaptureData.timestamp) : null;
+  $: sampleRateMHz = ad2CaptureData?.sample_rate_hz ? ad2CaptureData.sample_rate_hz / 1_000_000 : null;
+  $: liveWindowNs = ad2CaptureData?.duration_s ? Math.round(ad2CaptureData.duration_s * 1_000_000_000) : windowNs;
+  $: livePulsePoints = analogPoints(pulseValues, 20, 34, pulsePoints(glitchNs));
+  $: liveTriggerPoints = digitalPoints(triggerValues, 80, 64, triggerPoints());
+  $: liveClockPoints = digitalPoints(clockValues, 152, 132, clockPoints());
+  $: running = Boolean($activeCampaign?.active || ad2Streaming);
   $: outcome = String(latest?.outcome ?? $activeCampaign?.last_outcome ?? 'idle');
 </script>
 
@@ -97,10 +178,14 @@
       <h2>Instruction timing window</h2>
     </div>
     <div class="scope-meta">
-      <span>50 ns/div</span>
-      <span class="cyan">trig +{triggerNs} ns</span>
-      <span class="red">delay {Math.round(delayNs)} ns</span>
-      <span class:running>{running ? 'ACQUIRING' : 'STOPPED'}</span>
+      <span>{hasLiveCapture ? `${Math.round(liveWindowNs / 10)} ns/div` : '50 ns/div'}</span>
+      <span class="cyan">DIO0 trigger</span>
+      <span class="red">CH1 pulse</span>
+      <span class:running>{hasLiveCapture ? 'AD2 LIVE' : (running ? 'ACQUIRING' : 'STOPPED')}</span>
+      <button class="mini" disabled={ad2Busy} on:click={() => runAD2(ad2Streaming ? 'stop' : 'start')}>
+        {ad2Streaming ? 'STOP' : 'LIVE'}
+      </button>
+      <button class="mini" disabled={ad2Busy} on:click={() => runAD2('capture')}>CAP</button>
     </div>
   </div>
 
@@ -148,10 +233,10 @@
         <rect x={x(ins.t0)} y="10" width={Math.max(5, ins.name.length * 1.35)} height="7" rx="0.8" fill={ins.color} />
       {/each}
 
-      <polygon points={`${pulsePoints(glitchNs)} 100,20 0,20`} fill="url(#pulse-fill)" />
-      <polyline class="trace pulse" points={pulsePoints(glitchNs)} />
-      <polyline class="trace trigger" points={triggerPoints()} />
-      <polyline class="trace clock" points={clockPoints()} />
+      <polygon points={pulseFillPoints(livePulsePoints)} fill="url(#pulse-fill)" />
+      <polyline class="trace pulse" points={livePulsePoints} />
+      <polyline class="trace trigger" points={liveTriggerPoints} />
+      <polyline class="trace clock" points={liveClockPoints} />
 
       <line class="trigger-marker" x1={x(triggerNs)} y1="8" x2={x(triggerNs)} y2="162" />
       <line class="glitch-marker" x1={x(glitchNs)} y1="8" x2={x(glitchNs)} y2="162" />
@@ -181,10 +266,14 @@
 
   <div class="scope-foot">
     <span>outcome <b class={outcome}>{outcome}</b></span>
-    <span>trigger source scaffold D0</span>
-    <span>pulse source ChipSHOUTER</span>
-    <span>window {windowNs} ns</span>
+    <span>CH3 AD2 scope CH1 pulse monitor</span>
+    <span>CH2 DIO0 trigger/ref</span>
+    <span>CH1 DIO1 ledger clock</span>
+    <span>{sampleRateMHz ? `${sampleRateMHz.toFixed(1)} MS/s` : 'AD2 waiting'}{captureAgeS !== null ? ` age ${captureAgeS.toFixed(1)}s` : ''}</span>
   </div>
+  {#if ad2Error}
+    <div class="scope-error">{ad2Error}</div>
+  {/if}
 </section>
 
 {#if showConfig}
@@ -237,6 +326,7 @@
 
   .scope-foot {
     justify-content: space-between;
+    flex-wrap: wrap;
     border-top: 1px solid var(--line);
     border-bottom: 0;
     color: var(--fg-3);
@@ -270,6 +360,25 @@
   .scope-meta .cyan { color: var(--scope-cyan); }
   .scope-meta .red { color: var(--red-bright); }
   .scope-meta .running { color: var(--scope-green); }
+
+  .scope-meta .mini {
+    min-width: 42px;
+    height: 24px;
+    padding: 0 0.45rem;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+
+  .scope-error {
+    flex-shrink: 0;
+    padding: 0.45rem 0.9rem;
+    border-top: 1px solid rgba(229, 41, 58, 0.35);
+    color: var(--red-bright);
+    background: rgba(229, 41, 58, 0.08);
+    font-family: var(--mono);
+    font-size: 10px;
+  }
 
   .scope-body {
     position: relative;

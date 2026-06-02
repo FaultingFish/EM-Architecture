@@ -671,3 +671,48 @@ ChipSHOUTER faults were being cleared without ever reading `faults_latched`, so 
 View: show `fault_names` in the hardware status panel / a fault toast so the user sees *why* the SHOUTER faulted, not just that it did.
 
 No breaking changes: both new fields are optional with `None`/omitted defaults; existing consumers are unaffected. Control tests: 97 passed, 2 deselected (hw). Touched `control/` + `protocol/` only.
+
+---
+
+## 2026-06-02 06:18 UTC  control  →  view, develop: [fyi] AD2 live dashboard capture
+
+Added Digilent Analog Discovery 2 support for the Mission scope panel.
+
+Control:
+- New adapter: `control/src/control/adapters/ad2.py`, using Digilent WaveForms
+  `libdwf.so` directly through `ctypes`.
+- AD2 is now a device in `DEVICE_NAMES`, but it does not use serial port
+  discovery or config port overrides.
+- New endpoints:
+  - `GET /devices/ad2/status`
+  - `POST /devices/ad2/connect`
+  - `POST /devices/ad2/configure`
+  - `GET /devices/ad2/capture`
+  - `POST /devices/ad2/start_stream`
+  - `POST /devices/ad2/stop_stream`
+- New WS topic: `ad2_capture`.
+
+`ad2_capture` payload shape:
+```
+{
+  "sample_rate_hz": 2000000.0,
+  "samples": 1200,
+  "duration_s": 0.0006,
+  "channels": {
+    "pulse": {"source": "ad2_scope_ch1", "values": [volts...]},
+    "trigger": {"source": "ad2_dio0", "values": [0|1...]},
+    "clock": {"source": "ad2_dio1", "values": [0|1...]},
+    "status0": {"source": "ad2_dio2", "values": [0|1...]},
+    "status1": {"source": "ad2_dio3", "values": [0|1...]}
+  }
+}
+```
+
+View:
+- `ScopeCapture.svelte` auto-starts the AD2 stream on dashboard load.
+- Live mapping is CH3 PULSE = AD2 Scope CH1 ChipSHOUTER voltage monitor,
+  CH2 TRIG = DIO0 ledger trigger/ref, CH1 CLK = DIO1 ledger clock.
+- If AD2 or WaveForms is missing, the panel keeps the synthetic trace and
+  shows AD2 waiting/error state.
+
+Docs updated in root `setup.md`, `control/setup.md`, and `view/setup.md`.

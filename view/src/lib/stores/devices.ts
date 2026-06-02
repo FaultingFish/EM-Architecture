@@ -1,8 +1,8 @@
 import { writable } from 'svelte/store';
 
-export type DeviceName = 'chipshover' | 'chipshouter' | 'scaffold' | 'xds110';
+export type DeviceName = 'chipshover' | 'chipshouter' | 'scaffold' | 'xds110' | 'ad2';
 
-export const KNOWN_DEVICES: DeviceName[] = ['chipshover', 'chipshouter', 'scaffold', 'xds110'];
+export const KNOWN_DEVICES: DeviceName[] = ['chipshover', 'chipshouter', 'scaffold', 'xds110', 'ad2'];
 
 export interface DeviceStatus {
 	name: string;

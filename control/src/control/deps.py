@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import HTTPException, Request
 from emfi_protocol.projects import FlashedFirmware
+from control.adapters.ad2 import AD2Adapter
 from control.adapters.chipshouter import ChipShouterAdapter
 from control.adapters.chipshover import ChipShoverAdapter
 from control.adapters.husky import HuskyAdapter
@@ -32,13 +33,14 @@ from control.workers import DeviceWorker, WorkerRegistry
 
 LOGGER = logging.getLogger(__name__)
 
-DEVICE_NAMES = ("chipshover", "chipshouter", "scaffold", "xds110")
+DEVICE_NAMES = ("chipshover", "chipshouter", "scaffold", "xds110", "ad2")
 
 ADAPTER_ATTR = {
     "chipshover": "shover",
     "chipshouter": "shouter",
     "scaffold": "scaffold",
     "xds110": "xds110",
+    "ad2": "ad2",
 }
 
 
@@ -58,9 +60,11 @@ class AppContext:
     shouter: ChipShouterAdapter
     scaffold: ScaffoldAdapter
     xds110: XDS110Adapter
+    ad2: AD2Adapter
     husky: HuskyAdapter
     orchestrator: Orchestrator
     loop: Optional[asyncio.AbstractEventLoop] = None
+    ad2_stream_task: Optional[asyncio.Task] = None
     flashed_firmware: Optional[FlashedFirmware] = None
     campaigns: Dict[str, Any] = field(default_factory=dict)
 
@@ -116,6 +120,7 @@ def build_context() -> AppContext:
     shouter = ChipShouterAdapter()
     scaffold = ScaffoldAdapter()
     husky = HuskyAdapter()
+    ad2 = AD2Adapter()
     xds110 = XDS110Adapter(
         dslite_bin=os.environ.get("DSLITE_BIN") or config.get("programmer", "dslite_bin"),
         dslite_ccxml=config.get("programmer", "dslite_ccxml"),
@@ -138,6 +143,7 @@ def build_context() -> AppContext:
         shouter=shouter,
         scaffold=scaffold,
         xds110=xds110,
+        ad2=ad2,
         husky=husky,
         orchestrator=None,  # type: ignore[arg-type]
         flashed_firmware=load_flashed_firmware(),
