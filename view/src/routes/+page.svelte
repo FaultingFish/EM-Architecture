@@ -1,112 +1,195 @@
 <script lang="ts">
-  import Scene3D from '$lib/components/Scene3D.svelte';
-  import JogPad from '$lib/components/JogPad.svelte';
-  import CounterPanel from '$lib/components/CounterPanel.svelte';
-  import LogTail from '$lib/components/LogTail.svelte';
-  import ProgressBar from '$lib/components/ProgressBar.svelte';
-  import ScaffoldPowerCard from '$lib/components/ScaffoldPowerCard.svelte';
-  import { positionStore } from '$lib/stores/position';
+  import MissionJogPanel from '$lib/components/MissionJogPanel.svelte';
+  import MissionProgressPanel from '$lib/components/MissionProgressPanel.svelte';
+  import ScopeCapture from '$lib/components/ScopeCapture.svelte';
   import { activeCampaign } from '$lib/stores/campaign';
-  import type { AttemptEntry } from '$lib/stores/log';
-
-  let scene3d: Scene3D;
-
-  function onLogSelect(ev: CustomEvent<AttemptEntry>) {
-    const e = ev.detail;
-    scene3d?.highlightPoint(e.x, e.y, e.z);
-  }
+  import { countersStore } from '$lib/stores/counters';
+  import { positionStore } from '$lib/stores/position';
+  import { scaffoldPowerStore } from '$lib/stores/scaffold_power';
+  import { armStore } from '$lib/stores/arm';
 </script>
 
 <div class="mission">
-  <aside class="left">
-    <div class="panel">
-      <h3>Position</h3>
-      <div class="pos-readout">
-        <span>X <b>{$positionStore.x.toFixed(2)}</b></span>
-        <span>Y <b>{$positionStore.y.toFixed(2)}</b></span>
-        <span>Z <b>{$positionStore.z.toFixed(2)}</b></span>
-      </div>
+  <div class="actionbar">
+    <div class="campaign-id">
+      <span class="section-label">// campaign</span>
+      <strong>{$activeCampaign?.campaign_id ?? 'standby'}</strong>
     </div>
 
-    <div class="panel">
-      <h3>Manual Control</h3>
-      <JogPad />
+    <div class="quick-links">
+      <a href="/campaign">Campaign builder</a>
+      <a href="/assembly">Target instructions</a>
+      <a href="/runs">Replay runs</a>
     </div>
 
-    <div class="panel">
-      <h3>Scaffold Power</h3>
-      <ScaffoldPowerCard />
+    <div class="state-tags">
+      <span class="tag" class:green={$scaffoldPowerStore.dut}>DUT {$scaffoldPowerStore.dut ? '3.30V' : 'OFF'}</span>
+      <span class="tag" class:gold={$scaffoldPowerStore.platform}>Platform {$scaffoldPowerStore.platform ? 'ON' : 'OFF'}</span>
+      <span class="tag" class:red={$armStore.armed}>{$armStore.armed ? 'ARMED' : 'SAFE'}</span>
     </div>
+  </div>
 
-    {#if $activeCampaign}
-      <div class="panel">
-        <h3>Campaign Progress</h3>
-        <ProgressBar
-          value={$activeCampaign.completed_attempts}
-          max={$activeCampaign.total_attempts}
-        />
-        {#if $activeCampaign.last_outcome}
-          <p class="last-outcome">Last: <span class={$activeCampaign.last_outcome}>{$activeCampaign.last_outcome}</span></p>
-        {/if}
-      </div>
-    {/if}
-  </aside>
+  <div class="mission-body">
+    <MissionJogPanel />
+    <MissionProgressPanel />
+    <main class="hero">
+      <ScopeCapture />
+    </main>
+  </div>
 
-  <section class="center">
-    <Scene3D bind:this={scene3d} bedSize={100} />
-  </section>
-
-  <aside class="right">
-    <div class="panel">
-      <h3>Counters</h3>
-      <CounterPanel />
-    </div>
-
-    <div class="panel log-panel">
-      <h3>Logbook</h3>
-      <LogTail limit={200} on:select={onLogSelect} />
-    </div>
-  </aside>
+  <footer class="statusline">
+    <span><em>host</em> emfi bench</span>
+    <span><em>pos</em> X{$positionStore.x.toFixed(3)} Y{$positionStore.y.toFixed(3)} Z{$positionStore.z.toFixed(3)}</span>
+    <span><em>attempts</em> {$countersStore.attempts}</span>
+    <span><em>success</em> {$countersStore.glitches}</span>
+    <span><em>yield</em> {$countersStore.attempts ? (($countersStore.glitches / $countersStore.attempts) * 100).toFixed(1) : '0.0'}%</span>
+  </footer>
 </div>
 
 <style>
   .mission {
-    display: grid;
-    grid-template-columns: 280px 1fr 320px;
-    gap: 0;
     height: 100%;
-    overflow: hidden;
-  }
-
-  .left, .right {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    overflow-y: auto;
-    border-right: 1px solid var(--border);
-  }
-  .right { border-right: none; border-left: 1px solid var(--border); }
-
-  .center {
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    background: var(--ink-1);
   }
 
-  .pos-readout {
+  .actionbar {
+    flex-shrink: 0;
     display: flex;
+    align-items: center;
     gap: 1rem;
-    font-family: var(--mono);
-    font-size: 14px;
+    padding: 0.65rem 1rem;
+    background: var(--ink-0);
+    border-bottom: 1px solid var(--line);
   }
-  .pos-readout b { color: var(--accent); }
 
-  .log-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .campaign-id {
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+  }
 
-  .last-outcome { font-size: 11px; color: var(--muted); margin-top: 0.3rem; }
-  .last-outcome .glitch { color: var(--ok); }
-  .last-outcome .hang { color: var(--err); }
-  .last-outcome .crash { color: var(--warn); }
-  .last-outcome .nothing { color: var(--muted); }
+  .campaign-id strong {
+    max-width: 34vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg-1);
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .quick-links {
+    display: flex;
+    gap: 0.35rem;
+    padding: 0.2rem;
+    background: var(--ink-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .quick-links a {
+    padding: 0.4rem 0.65rem;
+    color: var(--fg-2);
+    border-radius: 2px;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .quick-links a:hover {
+    color: var(--fg-1);
+    background: var(--ink-4);
+    text-decoration: none;
+  }
+
+  .state-tags {
+    margin-left: auto;
+    display: flex;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .mission-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .hero {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    padding: 0.9rem 1rem;
+    display: flex;
+  }
+
+  .statusline {
+    flex-shrink: 0;
+    height: 31px;
+    display: flex;
+    align-items: center;
+    overflow-x: auto;
+    background: var(--ink-0);
+    border-top: 1px solid var(--line);
+    color: var(--fg-3);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    white-space: nowrap;
+  }
+
+  .statusline span {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0 0.9rem;
+    border-right: 1px solid var(--line-faint);
+  }
+
+  .statusline em {
+    color: var(--fg-4);
+    font-style: normal;
+  }
+
+  @media (max-width: 980px) {
+    .actionbar {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+
+    .quick-links {
+      max-width: 100%;
+      overflow-x: auto;
+    }
+
+    .campaign-id strong {
+      max-width: 84vw;
+    }
+
+    .state-tags {
+      margin-left: 0;
+      flex-wrap: wrap;
+    }
+
+    .mission {
+      overflow: auto;
+    }
+
+    .mission-body {
+      flex-direction: column;
+      overflow: visible;
+    }
+
+    .hero {
+      min-height: 520px;
+    }
+  }
 </style>
