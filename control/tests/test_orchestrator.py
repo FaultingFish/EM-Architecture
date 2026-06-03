@@ -49,6 +49,7 @@ class FakeShouter:
         self.faults: List[Any] = []
         self.armed = False
         self.pulse_widths: List[int] = []
+        self.hardware_trigger_configs: List[Dict[str, bool]] = []
         # Simulate device quantization: report back this delta vs commanded.
         self.width_readback_delta = 0
 
@@ -60,6 +61,16 @@ class FakeShouter:
 
     def configure(self, **kwargs) -> None:
         pass
+
+    def configure_hardware_trigger(
+        self,
+        active_high: bool = True,
+        termination_50r: bool = True,
+    ) -> None:
+        self.hardware_trigger_configs.append({
+            "active_high": bool(active_high),
+            "termination_50r": bool(termination_50r),
+        })
 
     def set_pulse_width(self, pulse_width_ns: int) -> int:
         self.pulse_widths.append(int(pulse_width_ns))
@@ -734,6 +745,30 @@ async def test_one_shot_campaign_programs_pgen_and_skips_usb_pulse(tmp_path):
     assert bits["shouter"].pulse_widths == [80, 80, 80]
     # No USB pulse in hardware mode.
     assert bits["shouter"].pulses == 0
+
+
+@pytest.mark.asyncio
+async def test_one_shot_auto_arm_configures_chipshouter_external_trigger(tmp_path):
+    bits = make_ctx(tmp_path)
+    campaign = {
+        "id": "hw-trig-config", "name": "test", "project_id": "_test",
+        "grid": {
+            "origin": (0.0, 0.0), "top_right": (0.0, 0.0),
+            "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+        },
+        "sweep": {"attempts_per_point": 1},
+        "trigger_mode": "one-shot",
+        "shouter_voltage": 250, "shouter_pulse_width_ns": 80, "shouter_mute": True,
+        "shouter_auto_arm": True,
+        "verdict_timeout_ms": 10,
+    }
+
+    await bits["orch"].run_campaign(campaign)
+
+    assert bits["shouter"].hardware_trigger_configs == [
+        {"active_high": True, "termination_50r": True}
+    ]
+    assert bits["shouter"].armed is False
 
 
 @pytest.mark.asyncio

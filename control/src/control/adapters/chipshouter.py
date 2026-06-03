@@ -251,6 +251,29 @@ class ChipShouterAdapter(BaseAdapter):
         LOGGER.info("ChipSHOUTER configured: V=%d width=%dns repeat=%d mute=%s",
                      voltage, pulse_width_ns, pulse_repeat, mute)
 
+    def configure_hardware_trigger(
+        self,
+        active_high: bool = True,
+        termination_50r: bool = True,
+    ) -> None:
+        """Configure the external SMB trigger input.
+
+        Scaffold pgen drives the ChipSHOUTER trigger input as a rising pulse, so
+        hardware-trigger campaigns need active-high mode enabled before arming.
+        """
+        self._require_connected()
+
+        def _do_configure() -> None:
+            self._impl.hwtrig_mode = bool(active_high)
+            self._impl.hwtrig_term = bool(termination_50r)
+
+        self._with_reset_retry("configure_hardware_trigger", _do_configure)
+        LOGGER.info(
+            "ChipSHOUTER hardware trigger configured: active_high=%s termination_50r=%s",
+            active_high,
+            termination_50r,
+        )
+
     def set_pulse_width(self, pulse_width_ns: int) -> int:
         """Set the HV pulse width (ns); return the value the device acknowledges.
 

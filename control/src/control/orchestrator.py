@@ -674,6 +674,12 @@ class Orchestrator:
                     arm_timeout_min=1,
                     mute=bool(c.get("shouter_mute", True)),
                 )
+                if trigger_mode in ("one-shot", "free-run"):
+                    await shouter_worker.call(
+                        self.shouter.configure_hardware_trigger,
+                        active_high=True,
+                        termination_50r=True,
+                    )
                 await shouter_worker.call(self.shouter.arm, clear_faults=True)
             except Exception as exc:
                 LOGGER.exception("Auto-arm failed")
