@@ -101,6 +101,15 @@ class _AD2StreamRequest(BaseModel):
     period_s: float = Field(0.5, ge=0.1, le=5.0)
 
 
+class _AD2TriggeredCaptureRequest(BaseModel):
+    sample_rate_hz: float = Field(100_000_000.0, gt=0)
+    samples: int = Field(8192, ge=64, le=8192)
+    analog_range_v: float = Field(50.0, gt=0)
+    trigger_level_v: float = 1.0
+    trigger_hysteresis_v: float = Field(0.1, ge=0)
+    timeout_s: float = Field(2.0, gt=0, le=30.0)
+
+
 def _broadcast_power(ctx: AppContext, state: Dict[str, bool]) -> None:
     ctx.broadcast("scaffold_power", state)
 
@@ -204,6 +213,27 @@ async def ad2_configure(req: _AD2ConfigureRequest, ctx: AppContext = Depends(get
 async def ad2_capture(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
     capture = await call_subprocess_adapter(ctx.ad2.capture)
     ctx.broadcast("ad2_capture", capture)
+    return capture
+
+
+@router.post("/ad2/capture_triggered")
+async def ad2_capture_triggered(
+    req: _AD2TriggeredCaptureRequest, ctx: AppContext = Depends(get_ctx)
+) -> Dict[str, Any]:
+    if ctx.ad2_stream_task is not None:
+        ctx.ad2_stream_task.cancel()
+        ctx.ad2_stream_task = None
+    capture = await call_subprocess_adapter(
+        ctx.ad2.capture_triggered,
+        sample_rate_hz=req.sample_rate_hz,
+        samples=req.samples,
+        analog_range_v=req.analog_range_v,
+        trigger_level_v=req.trigger_level_v,
+        trigger_hysteresis_v=req.trigger_hysteresis_v,
+        timeout_s=req.timeout_s,
+    )
+    ctx.broadcast("ad2_capture", capture)
+    ctx.broadcast("device_status", _device_status(ctx, "ad2"))
     return capture
 
 

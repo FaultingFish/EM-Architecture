@@ -26,4 +26,5 @@ async def get_config(ctx: AppContext = Depends(get_ctx)) -> Dict[str, Any]:
         "axes": ctx.config.get("axes", default={}),
         "ports": ctx.config.get("ports", default={}),
         "safety": ctx.config.get("safety", default={}),
+        "fixture": ctx.config.get("fixture", default={}),
     }

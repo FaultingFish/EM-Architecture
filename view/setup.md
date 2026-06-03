@@ -83,6 +83,12 @@ The scope panel configures the AD2 for the current 20:1 ChipSHOUTER monitor
 probe, auto-starts `/devices/ad2/start_stream`, and renders live samples when
 Control emits `ad2_capture`. If the AD2 or WaveForms runtime is missing, it
 keeps the synthetic timing trace visible and reports AD2 as waiting.
+Use the `TRIG` button for a high-speed CH1 triggered capture; it stops the live
+stream, waits for a pulse-monitor edge, and renders the resulting AD2 capture.
+
+Calibration can save the bolted-down board as the default fixture. Campaigns
+load that saved grid and can apply the machine-space origin after ChipShover
+homes, so the chip remains at logical `(0, 0)` without hand-jogging.
 
 The Husky crowbar path is scaffolded in Control but not live hardware control
 yet. View should not present dual-target/Husky campaigns as operational until

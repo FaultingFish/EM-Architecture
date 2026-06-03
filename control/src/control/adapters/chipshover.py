@@ -155,6 +155,25 @@ class ChipShoverAdapter(BaseAdapter):
         self._origin_set = True
         LOGGER.info("ChipShover origin set at machine %s", pos)
 
+    @property
+    def origin_machine(self) -> Tuple[float, float, float]:
+        return self._origin_machine
+
+    @property
+    def origin_set(self) -> bool:
+        return self._origin_set
+
+    def set_origin_machine(self, x: float, y: float, z: float) -> None:
+        """Restore a known fixture origin in machine coordinates.
+
+        This is used after homing a bolted-down fixture: home establishes a
+        repeatable machine frame, then the saved chip corner becomes logical
+        (0, 0, 0) without jogging there by hand.
+        """
+        self._origin_machine = (float(x), float(y), float(z))
+        self._origin_set = True
+        LOGGER.info("ChipShover origin restored at machine %s", self._origin_machine)
+
     # ------------------------------------------------------------------
     # Coordinate transforms (pure; no hardware access).
     # ------------------------------------------------------------------

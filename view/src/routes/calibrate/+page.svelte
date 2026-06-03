@@ -3,7 +3,7 @@
   import { browser } from '$app/environment';
   import { positionStore } from '$lib/stores/position';
   import { armStore } from '$lib/stores/arm';
-  import { moveAbs, setOrigin, setTopRight } from '$lib/api/control';
+  import { moveAbs, saveCurrentFixture, setOrigin, setTopRight } from '$lib/api/control';
   import { toasts } from '$lib/stores/toast';
   import JogPad from '$lib/components/JogPad.svelte';
   import Scene3D from '$lib/components/Scene3D.svelte';
@@ -18,6 +18,7 @@
   let topRightY: number | null = null;
 
   let busy = false;
+  let savingFixture = false;
 
   // Smallest meaningful jog — below this we treat the probe as "still at origin".
   const EPS = 0.01;
@@ -131,6 +132,25 @@
       top_right_y: String(topRightY),
     });
     goto(`/campaign?${qs.toString()}`);
+  }
+
+  async function saveDefaultFixture() {
+    savingFixture = true;
+    try {
+      await saveCurrentFixture({
+        name: 'default-chip',
+        step_size_mm: 1.0,
+        z_min_mm: 0.0,
+        z_max_mm: 0.5,
+        z_step_mm: 0.1,
+        notes: 'Saved from calibration wizard',
+      });
+      toasts.info('Default fixture saved');
+    } catch {
+      toasts.error('Save fixture failed');
+    } finally {
+      savingFixture = false;
+    }
   }
 </script>
 
@@ -260,6 +280,9 @@
 
         <div class="actions">
           <button on:click={jogToOrigin}>Jog to origin (test)</button>
+          <button on:click={saveDefaultFixture} disabled={savingFixture || tooSmall}>
+            {savingFixture ? 'Saving...' : 'Save default fixture'}
+          </button>
           <button
             class="primary"
             on:click={finish}

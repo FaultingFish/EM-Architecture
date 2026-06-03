@@ -140,6 +140,39 @@ export async function setTopRight(x: number, y: number) {
   return request('POST', '/motion/set_top_right', { x, y });
 }
 
+export interface FixtureGrid {
+  name: string;
+  origin: [number, number];
+  top_right: [number, number];
+  machine_origin: [number, number, number];
+  machine_top_right?: [number, number, number] | null;
+  step_size_mm: number;
+  z_min_mm: number;
+  z_max_mm: number;
+  z_step_mm: number;
+  notes?: string;
+  updated_at?: string;
+}
+
+export async function getFixture(): Promise<{ ok: boolean; fixture: FixtureGrid | null }> {
+  return request('GET', '/motion/fixture');
+}
+
+export async function saveCurrentFixture(body: {
+  name?: string;
+  step_size_mm?: number;
+  z_min_mm?: number;
+  z_max_mm?: number;
+  z_step_mm?: number;
+  notes?: string;
+}): Promise<{ ok: boolean; fixture: FixtureGrid }> {
+  return request('POST', '/motion/fixture/save_current', body);
+}
+
+export async function applyFixture(): Promise<{ ok: boolean; fixture: FixtureGrid; origin_set: boolean; top_right: [number, number] }> {
+  return request('POST', '/motion/fixture/apply');
+}
+
 export async function connectDevice(id: string, port?: string) {
   return request('POST', `/devices/${id}/connect`, port ? { port } : undefined);
 }
@@ -211,6 +244,17 @@ export async function ad2Connect() {
 
 export async function ad2Capture() {
   return request('GET', '/devices/ad2/capture');
+}
+
+export async function ad2TriggeredCapture(params: {
+  sample_rate_hz?: number;
+  samples?: number;
+  analog_range_v?: number;
+  trigger_level_v?: number;
+  trigger_hysteresis_v?: number;
+  timeout_s?: number;
+} = {}) {
+  return request('POST', '/devices/ad2/capture_triggered', params);
 }
 
 export async function ad2Configure(params: {

@@ -52,6 +52,9 @@ DEFAULTS: Dict[str, Any] = {
         "max_z_height_mm": 0.5,
         "attempts_per_location": 1,
     },
+    "fixture": {
+        "default_grid": None,
+    },
     "known_devices": {
         "chipshover": [
             {"manufacturer_contains": "Smoothie"},

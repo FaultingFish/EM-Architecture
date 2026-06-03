@@ -15,6 +15,11 @@ export interface AD2Capture {
 	available: boolean;
 	connected: boolean;
 	timestamp?: number;
+	mode?: string;
+	triggered?: boolean;
+	timeout?: boolean;
+	auto_triggered?: boolean;
+	trigger_level_v?: number;
 	sample_rate_hz: number;
 	samples: number;
 	duration_s?: number;

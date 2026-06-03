@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ad2Capture, ad2Configure, ad2Connect, ad2StartStream, ad2StopStream } from '$lib/api/control';
+  import { ad2Capture, ad2Configure, ad2Connect, ad2StartStream, ad2StopStream, ad2TriggeredCapture } from '$lib/api/control';
   import { ad2CaptureStore, type AD2Channel } from '$lib/stores/ad2';
   import { logStore } from '$lib/stores/log';
   import { activeCampaign } from '$lib/stores/campaign';
@@ -161,7 +161,7 @@
     instructions = instructions.map((item) => item.id === id ? { ...item, [field]: value } : item);
   }
 
-  async function runAD2(action: 'connect' | 'capture' | 'start' | 'stop') {
+  async function runAD2(action: 'connect' | 'capture' | 'triggered' | 'start' | 'stop') {
     ad2Busy = true;
     ad2Error = '';
     try {
@@ -169,6 +169,18 @@
       if (action === 'capture') {
         await ad2Configure({ sample_rate_hz: 2_000_000, samples: 8192, analog_range_v: 50 });
         await ad2Capture();
+      }
+      if (action === 'triggered') {
+        await ad2Connect();
+        await ad2TriggeredCapture({
+          sample_rate_hz: 100_000_000,
+          samples: 8192,
+          analog_range_v: 50,
+          trigger_level_v: 1.0,
+          trigger_hysteresis_v: 0.1,
+          timeout_s: 3,
+        });
+        ad2Streaming = false;
       }
       if (action === 'start') {
         await ad2Connect();
@@ -199,6 +211,9 @@
   $: triggerValues = channelValues(ad2CaptureData?.channels?.trigger);
   $: clockValues = channelValues(ad2CaptureData?.channels?.clock);
   $: hasLiveCapture = Boolean(ad2CaptureData?.connected && pulseValues);
+  $: captureMode = ad2CaptureData?.mode === 'triggered'
+    ? (ad2CaptureData.timeout ? 'TRIG TIMEOUT' : (ad2CaptureData.triggered ? 'TRIG CAP' : 'TRIG READY'))
+    : (hasLiveCapture ? 'AD2 LIVE' : (running ? 'ACQUIRING' : 'STOPPED'));
   $: captureAgeS = ad2CaptureData?.timestamp ? Math.max(0, Date.now() / 1000 - ad2CaptureData.timestamp) : null;
   $: sampleRateMHz = ad2CaptureData?.sample_rate_hz ? ad2CaptureData.sample_rate_hz / 1_000_000 : null;
   $: liveWindowNs = ad2CaptureData?.duration_s ? Math.round(ad2CaptureData.duration_s * 1_000_000_000) : windowNs;
@@ -222,11 +237,12 @@
       <span class="cyan">DIO0 trigger</span>
       <span class="red">CH1 pulse x{probeRatio}</span>
       <span class="red">{pulsePeakV !== null ? `peak ${pulsePeakV.toFixed(1)} V` : '+/-250 V span'}</span>
-      <span class:running>{hasLiveCapture ? 'AD2 LIVE' : (running ? 'ACQUIRING' : 'STOPPED')}</span>
+      <span class:running>{captureMode}</span>
       <button class="mini" disabled={ad2Busy} on:click={() => runAD2(ad2Streaming ? 'stop' : 'start')}>
         {ad2Streaming ? 'STOP' : 'LIVE'}
       </button>
       <button class="mini" disabled={ad2Busy} on:click={() => runAD2('capture')}>CAP</button>
+      <button class="mini wide" disabled={ad2Busy} on:click={() => runAD2('triggered')}>TRIG</button>
     </div>
   </div>
 
@@ -310,7 +326,7 @@
     <span>CH3 AD2 scope CH1 pulse monitor x{probeRatio}</span>
     <span>CH2 DIO0 trigger/ref</span>
     <span>CH1 DIO1 ledger clock</span>
-    <span>{sampleRateMHz ? `${sampleRateMHz.toFixed(1)} MS/s` : 'AD2 waiting'}{captureAgeS !== null ? ` age ${captureAgeS.toFixed(1)}s` : ''}</span>
+    <span>{sampleRateMHz ? `${sampleRateMHz.toFixed(1)} MS/s` : 'AD2 waiting'}{captureAgeS !== null ? ` age ${captureAgeS.toFixed(1)}s` : ''}{ad2CaptureData?.trigger_level_v != null ? ` trig ${ad2CaptureData.trigger_level_v.toFixed(2)} Vraw` : ''}</span>
   </div>
   {#if ad2Error}
     <div class="scope-error">{ad2Error}</div>
@@ -409,6 +425,10 @@
     border-radius: 4px;
     font-family: var(--mono);
     font-size: 10px;
+  }
+
+  .scope-meta .mini.wide {
+    min-width: 48px;
   }
 
   .scope-error {

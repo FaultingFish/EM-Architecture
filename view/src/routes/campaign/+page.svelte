@@ -4,7 +4,7 @@
   import SweepConfig from '$lib/components/SweepConfig.svelte';
   import GridConfig from '$lib/components/GridConfig.svelte';
   import { listPresets, listProjects } from '$lib/api/develop';
-  import { startCampaign, preflightCampaign, ApiError } from '$lib/api/control';
+  import { applyFixture, getFixture, startCampaign, preflightCampaign, ApiError, type FixtureGrid } from '$lib/api/control';
   import { toasts } from '$lib/stores/toast';
   import { onMount } from 'svelte';
 
@@ -26,6 +26,8 @@
   let presetsLoading = false;
   let showAdvanced = false;
   let showPreview = false;
+  let fixtureName = '';
+  let applyingFixture = false;
   let preflightState: PreflightState = 'idle';
   let preflightMessage = 'Run preflight before start to check Control readiness.';
   let preflightChecks: DisplayCheck[] = [];
@@ -71,6 +73,8 @@
         top_right: [parseFloat(tx), parseFloat(ty)],
       };
       toasts.info('Grid pre-populated from calibration');
+    } else {
+      await loadDefaultFixture(true);
     }
 
     try {
@@ -80,6 +84,44 @@
       toasts.warn('Could not load projects from Develop');
     }
   });
+
+  function useFixtureGrid(fixture: FixtureGrid) {
+    grid = {
+      ...grid,
+      origin: fixture.origin,
+      top_right: fixture.top_right,
+      step_size_mm: fixture.step_size_mm,
+      z_min_mm: fixture.z_min_mm,
+      z_max_mm: fixture.z_max_mm,
+      z_step_mm: fixture.z_step_mm,
+    };
+    fixtureName = fixture.name;
+  }
+
+  async function loadDefaultFixture(applyOrigin = false) {
+    try {
+      const result = await getFixture();
+      if (!result.fixture) return;
+      useFixtureGrid(result.fixture);
+      toasts.info(`Grid loaded from fixture ${result.fixture.name}`);
+      if (applyOrigin) await applyDefaultFixture();
+    } catch {
+      toasts.warn('Could not load fixture default');
+    }
+  }
+
+  async function applyDefaultFixture() {
+    applyingFixture = true;
+    try {
+      const result = await applyFixture();
+      useFixtureGrid(result.fixture);
+      toasts.info(`Fixture ${result.fixture.name} applied`);
+    } catch {
+      toasts.error('Apply fixture failed');
+    } finally {
+      applyingFixture = false;
+    }
+  }
 
   $: versions = projects.find((p: any) => p.id === selectedProject)?.versions ?? [];
   let presetProject = '';
@@ -494,6 +536,16 @@
         {/if}
       </div>
 
+      <div class="grid-headline">
+        <div>
+          <h3>Grid</h3>
+          {#if fixtureName}<small>fixture {fixtureName}</small>{/if}
+        </div>
+        <button type="button" on:click={() => applyDefaultFixture()} disabled={applyingFixture}>
+          {applyingFixture ? 'Applying...' : 'Apply fixture'}
+        </button>
+      </div>
+
       <GridConfig bind:value={grid} />
 
       <div class="panel preflight" class:warn={smallGridBlocked}>
@@ -624,6 +676,22 @@
   .field input[type="text"], .field input[type="number"], .field select { width: 100%; }
   .field.row { flex-direction: row; gap: 1rem; }
   .stop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+  .grid-headline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  .grid-headline h3 { margin: 0; }
+  .grid-headline small {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+  }
 
   details.panel { cursor: default; }
   details.panel summary {

@@ -172,3 +172,26 @@ loads and falls back to the synthetic timing trace if the AD2 is not available.
 The current ChipSHOUTER voltage-monitor lead is on a 20:1 probe, so Control
 reports `pulse_probe_ratio: 20` and View renders CH3 as scaled pulse voltage
 instead of auto-normalizing the noise floor.
+
+For pulse validation, use `/devices/ad2/capture_triggered` or the dashboard
+`TRIG` scope button. This arms a high-speed CH1 analog edge trigger at
+100 MS/s, captures an 8192-sample window, and keeps DIO0/DIO1 samples aligned
+with the pulse monitor. The default trigger level is `1.0 V` raw, which is
+about `20 V` at the ChipSHOUTER monitor point through the 20:1 probe.
+
+## 10. Bolted fixture profile
+
+After homing, ChipShover clears the logical origin. For the bolted-down board,
+save the calibrated chip scan box as the default fixture from the calibration
+page. Control persists it in `~/.config/emfi-control/config.json` under
+`fixture.default_grid`, including both logical grid bounds and the machine-space
+origin. The campaign page can then apply the fixture after a home, restoring the
+chip corner as logical `(0, 0, 0)` without manually jogging the probe.
+
+Useful endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /motion/fixture` | Read the saved default fixture |
+| `POST /motion/fixture/save_current` | Save the current origin/top-right as the default fixture |
+| `POST /motion/fixture/apply` | Restore the saved machine origin and grid after homing |
