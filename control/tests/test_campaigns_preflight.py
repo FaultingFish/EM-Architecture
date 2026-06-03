@@ -296,6 +296,17 @@ async def test_campaign_start_blocks_flashed_build_mismatch():
 
 
 @pytest.mark.asyncio
+async def test_campaign_start_blocks_failed_preflight_policy():
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    with pytest.raises(HTTPException) as exc:
+        await start(_campaign(automation_policy=AutomationBudgetPolicy(max_attempts=10)), ctx)
+
+    assert exc.value.status_code == 409
+    assert any("automation_policy.max_attempts" in b for b in exc.value.detail["blockers"])
+
+
+@pytest.mark.asyncio
 async def test_campaign_start_counts_materialized_target_delay_sweep(
     tmp_path,
     monkeypatch,

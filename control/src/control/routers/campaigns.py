@@ -279,9 +279,15 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
 @router.post("", response_model=CampaignStatus)
 async def start(campaign: Campaign, ctx: AppContext = Depends(get_ctx)) -> CampaignStatus:
     """Start a campaign. Returns immediately with the assigned ID."""
-    provenance_blockers = _provenance_blockers(campaign, ctx)
-    if provenance_blockers:
-        raise HTTPException(status_code=409, detail={"blockers": provenance_blockers})
+    preflight = _preflight(campaign, ctx)
+    if preflight.blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "blockers": preflight.blockers,
+                "warnings": preflight.warnings,
+            },
+        )
 
     if campaign.id is None:
         campaign.id = str(uuid.uuid4())
