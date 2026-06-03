@@ -72,6 +72,12 @@ _RESET_RECOVERY_SLEEP = 5.0
 _RESET_RETRY_LIMIT = 2  # one initial try + one retry
 
 
+def _is_armed_state(state: str) -> bool:
+    """Return True only for actual armed states, not ``disarmed``."""
+    normalized = state.strip().lower()
+    return normalized == "armed" or normalized.startswith("armed ")
+
+
 def _fault_names(raw: Any) -> List[str]:
     """Normalize a faults_latched/faults_current value to a list of names.
 
@@ -284,7 +290,7 @@ class ChipShouterAdapter(BaseAdapter):
                 self._capture_and_clear_faults()
                 time.sleep(0.1)
                 state = str(self._impl.state).lower()
-            if "armed" in state:
+            if _is_armed_state(state):
                 LOGGER.debug("ChipSHOUTER already armed, skipping")
                 return True
             LOGGER.info("ChipSHOUTER arming (timeout=%.1fs)", timeout_s)
@@ -306,7 +312,7 @@ class ChipShouterAdapter(BaseAdapter):
                 )
                 time.sleep(_RESET_RECOVERY_SLEEP)
                 continue
-            if "armed" in s:
+            if _is_armed_state(s):
                 LOGGER.info("ChipSHOUTER armed")
                 return
             time.sleep(0.1)
@@ -327,7 +333,7 @@ class ChipShouterAdapter(BaseAdapter):
             return
         try:
             state = str(self._impl.state).lower()
-            if "armed" not in state:
+            if not _is_armed_state(state):
                 return
             self._impl.armed = False
             LOGGER.info("ChipSHOUTER disarmed (safe)")

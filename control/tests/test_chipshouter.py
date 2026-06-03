@@ -113,6 +113,15 @@ def test_arm_idempotent_when_already_armed():
     assert sa._impl.armed is False
 
 
+def test_arm_does_not_treat_disarmed_as_armed():
+    sa = ChipShouterAdapter()
+    sa._impl = _FakeImpl(state_sequence=["disarmed", "armed"])
+
+    sa.arm()
+
+    assert sa._impl.armed is True
+
+
 def test_arm_succeeds_when_state_transitions():
     sa = ChipShouterAdapter()
     sa._impl = _FakeImpl(state_sequence=["ready", "armed"])
