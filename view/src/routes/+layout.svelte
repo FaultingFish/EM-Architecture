@@ -8,7 +8,7 @@
   import Toast from '$lib/components/Toast.svelte';
   import EStopOverlay from '$lib/components/EStopOverlay.svelte';
   import { stopCampaign, disarm } from '$lib/api/control';
-  import { DEVELOP_URL } from '$lib/config';
+  import { DEVELOP_SITE_URL } from '$lib/config';
   import { connect } from '$lib/ws/control_ws';
   import { toasts } from '$lib/stores/toast';
 
@@ -66,7 +66,7 @@
       <a href="/calibrate" class:active={currentPath === '/calibrate'}>Calibrate</a>
       <a href="/runs" class:active={currentPath === '/runs'}>Run History</a>
       <a href="/heatmap" class:active={currentPath === '/heatmap'}>Heatmap</a>
-      <a href={`${DEVELOP_URL.replace(/\/$/, '')}/docs`} target="_blank" rel="noreferrer">Develop ↗</a>
+      <a href={DEVELOP_SITE_URL} target="_blank" rel="noreferrer">Develop ↗</a>
     </nav>
 
     <div class="status-strip" aria-label="Device status">

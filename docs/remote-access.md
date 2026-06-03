@@ -9,7 +9,8 @@ The EMFI platform was designed for a trusted LAN. Remote access is acceptable on
 Use one public hostname:
 
 ```text
-https://emfi.ics.red/          -> View dashboard
+https://emfi.ics.red/              -> View dashboard
+https://emfi.ics.red/develop/      -> Develop UI
 https://emfi.ics.red/api/control/  -> Control API and WebSocket, proxied to 127.0.0.1:8001
 https://emfi.ics.red/api/develop/  -> Develop API and WebSocket, proxied to 127.0.0.1:8002
 ```
@@ -205,13 +206,13 @@ After authenticating through Cloudflare Access:
 
 ```text
 https://emfi.ics.red/ loads View
+https://emfi.ics.red/develop/ loads Develop UI
 https://emfi.ics.red/api/control/docs loads Control docs
-https://emfi.ics.red/api/develop/docs loads Develop docs
+https://emfi.ics.red/api/develop/docs loads Develop API docs
 ```
 
-The Develop Svelte frontend is not currently base-path aware, so the public
-single-host setup should use View as the central UI and `/api/develop` for
-Develop API/docs. A future UI task can either embed Develop screens into View
-or make the Develop frontend build cleanly under `/develop/`.
+The Develop Svelte frontend is built with `DEVELOP_BASE_PATH=/develop` for the
+public single-host setup. Keep `/api/develop` for programmatic API access and
+OpenAPI docs.
 
 Keep `emfi-control` stopped when the rig is unattended or in an unsafe physical state.

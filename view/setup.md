@@ -28,6 +28,7 @@ URLs are configurable at build time:
 ```bash
 VITE_CONTROL_URL=http://10.164.9.112:8001 \
 VITE_DEVELOP_URL=http://10.164.9.112:8002 \
+VITE_DEVELOP_SITE_URL=http://10.164.9.112:8002/ \
 npm run build
 ```
 

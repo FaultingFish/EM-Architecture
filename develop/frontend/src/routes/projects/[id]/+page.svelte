@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/stores';
+  import { base } from '$app/paths';
   import { onMount, onDestroy } from 'svelte';
   import ProjectTree from '$lib/components/ProjectTree.svelte';
   import MonacoEditor from '$lib/components/MonacoEditor.svelte';
@@ -264,7 +265,7 @@
         <button class="btn small retry" on:click={() => doBuild(true)} disabled={building}>Retry</button>
       {/if}
       <button class="btn small" on:click={doFlash} disabled={builds.length === 0}>Flash</button>
-      <a class="btn small link" href="/projects/{id}/asm">ASM</a>
+      <a class="btn small link" href="{base}/projects/{id}/asm">ASM</a>
       {#if project?.build_command}
         <span class="build-cmd" title={project.build_command}>{project.build_command}</span>
       {/if}

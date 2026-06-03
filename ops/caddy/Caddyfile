@@ -38,10 +38,14 @@ http://:8080 {
 		}
 	}
 
-	# Human shortcut for Develop API docs. The Develop Svelte frontend is not
-	# base-path aware yet; keep API access under /api/develop for now.
 	handle /develop {
-		redir /api/develop/docs 308
+		redir /develop/ 308
+	}
+
+	handle_path /develop/* {
+		reverse_proxy 127.0.0.1:8002 {
+			header_up X-Forwarded-Prefix /develop
+		}
 	}
 
 	handle {

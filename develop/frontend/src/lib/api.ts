@@ -2,9 +2,10 @@ import type {
   Project, BuildArtifact, AssemblyListing, GlitchTarget,
   FileTreeNode, Template, GitLogEntry
 } from '$lib/types';
+import { base } from '$app/paths';
 
-const API = '';
-const CONTROL = import.meta.env.VITE_CONTROL_URL || 'http://localhost:8001';
+const API = base;
+const CONTROL = import.meta.env.VITE_CONTROL_URL || '/api/control';
 
 async function json_or_throw(r: Response) {
   if (!r.ok) {
@@ -167,7 +168,7 @@ export async function getPrompt(id: string): Promise<{ prompt: string }> {
 
 // ── Flash (calls Control service) ──────────────────────────
 export async function flashToTarget(projectId: string, sha: string): Promise<unknown> {
-  const elfUrl = `${window.location.protocol}//${window.location.hostname}:8002/projects/${projectId}/builds/${sha}/firmware.elf`;
+  const elfUrl = `${window.location.origin}${API}/projects/${projectId}/builds/${sha}/firmware.elf`;
   return json_or_throw(await fetch(`${CONTROL}/target/flash`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

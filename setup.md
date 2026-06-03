@@ -74,10 +74,14 @@ cd ../develop
 PYTHONPATH=src:../protocol ../.venv/bin/python -m pytest
 ```
 
-## 5. Install View dependencies
+## 5. Install frontend dependencies
 
 ```bash
-cd view
+cd develop/frontend
+npm install
+DEVELOP_BASE_PATH=/develop VITE_CONTROL_URL=/api/control npm run build
+
+cd ../../view
 npm install
 npm run check
 npm run build

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { base } from '$app/paths';
   import { onMount } from 'svelte';
   import { listProjects, createProject, deleteProject, listTemplates, importProject } from '$lib/api';
   import { goto } from '$app/navigation';
@@ -65,7 +66,7 @@
         exclude: excludeList.length > 0 ? excludeList : undefined,
       });
       showImport = false;
-      goto(`/projects/${p.id}`);
+      goto(`${base}/projects/${p.id}`);
     } catch (e: any) {
       error = e.message;
     }
@@ -170,7 +171,7 @@
   {:else}
     <div class="grid">
       {#each projects as p}
-        <a href="/projects/{p.id}" class="card">
+        <a href="{base}/projects/{p.id}" class="card">
           <div class="card-header">
             <strong>{p.name}</strong>
             <button class="btn-icon danger" on:click|preventDefault|stopPropagation={() => handleDelete(p.id)} title="Delete">✕</button>

@@ -1,22 +1,24 @@
 <script lang="ts">
   import { page } from '$app/stores';
+  import { base } from '$app/paths';
 
-  $: segments = $page.url.pathname.split('/').filter(Boolean);
+  $: relativePath = $page.url.pathname.slice(base.length) || '/';
+  $: segments = relativePath.split('/').filter(Boolean);
   $: projectId = segments[0] === 'projects' && segments[1] ? segments[1] : null;
 </script>
 
 <div class="app">
   <header>
     <div class="brand">
-      <a href="/">EMFI Develop</a>
+      <a href="{base}/">EMFI Develop</a>
     </div>
     <nav>
-      <a href="/" class:active={$page.url.pathname === '/'}>Projects</a>
+      <a href="{base}/" class:active={relativePath === '/'}>Projects</a>
       {#if projectId}
         <span class="sep">/</span>
-        <a href="/projects/{projectId}" class:active={segments.length === 2}>{projectId}</a>
+        <a href="{base}/projects/{projectId}" class:active={segments.length === 2}>{projectId}</a>
         <span class="sep">/</span>
-        <a href="/projects/{projectId}/asm" class:active={segments[2] === 'asm'}>Assembly</a>
+        <a href="{base}/projects/{projectId}/asm" class:active={segments[2] === 'asm'}>Assembly</a>
       {/if}
     </nav>
   </header>
