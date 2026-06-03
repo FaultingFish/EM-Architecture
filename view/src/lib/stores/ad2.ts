@@ -4,6 +4,9 @@ export interface AD2Channel {
 	source: string;
 	label?: string;
 	unit?: string;
+	probe_ratio?: number;
+	scaled_unit?: string;
+	scaled_label?: string;
 	values: number[];
 }
 
@@ -16,6 +19,7 @@ export interface AD2Capture {
 	samples: number;
 	duration_s?: number;
 	analog_range_v?: number;
+	pulse_probe_ratio?: number;
 	mapping?: Record<string, unknown>;
 	channels: {
 		pulse?: AD2Channel;

@@ -166,6 +166,9 @@ Current wiring convention:
 | Optional markers | DIO2/DIO3 | Exposed status, UART, or firmware markers |
 
 Control endpoints are `/devices/ad2/status`, `/devices/ad2/connect`,
-`/devices/ad2/capture`, `/devices/ad2/start_stream`, and
-`/devices/ad2/stop_stream`. View auto-starts the stream when the dashboard
+`/devices/ad2/configure`, `/devices/ad2/capture`, `/devices/ad2/start_stream`,
+and `/devices/ad2/stop_stream`. View auto-starts the stream when the dashboard
 loads and falls back to the synthetic timing trace if the AD2 is not available.
+The current ChipSHOUTER voltage-monitor lead is on a 20:1 probe, so Control
+reports `pulse_probe_ratio: 20` and View renders CH3 as scaled pulse voltage
+instead of auto-normalizing the noise floor.

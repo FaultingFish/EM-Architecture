@@ -79,9 +79,10 @@ If you change envelope shapes in `src/lib/ws/control_ws.ts`, post in `agentConve
 
 You'll mostly care about these for what the user *sees* — make sure DeviceStatusCard renders every listed device sensibly even when one is unavailable.
 
-The scope panel auto-starts `/devices/ad2/start_stream` and renders live AD2
-samples when Control emits `ad2_capture`. If the AD2 or WaveForms runtime is
-missing, it keeps the synthetic timing trace visible and reports AD2 as waiting.
+The scope panel configures the AD2 for the current 20:1 ChipSHOUTER monitor
+probe, auto-starts `/devices/ad2/start_stream`, and renders live samples when
+Control emits `ad2_capture`. If the AD2 or WaveForms runtime is missing, it
+keeps the synthetic timing trace visible and reports AD2 as waiting.
 
 The Husky crowbar path is scaffolded in Control but not live hardware control
 yet. View should not present dual-target/Husky campaigns as operational until

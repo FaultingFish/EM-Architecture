@@ -32,8 +32,9 @@ class AD2Adapter(BaseAdapter):
         self._last_error: Optional[str] = None
         self._sample_rate_hz = 2_000_000.0
         self._digital_sample_rate_hz = 2_000_000.0
-        self._samples = 1200
-        self._analog_range_v = 5.0
+        self._samples = 8192
+        self._analog_range_v = 50.0
+        self._pulse_probe_ratio = 20.0
         self._available = False
         self._load_runtime()
 
@@ -131,6 +132,9 @@ class AD2Adapter(BaseAdapter):
                     "source": "ad2_scope_ch1",
                     "label": "ChipSHOUTER voltage monitor",
                     "unit": "V",
+                    "probe_ratio": self._pulse_probe_ratio,
+                    "scaled_unit": "V",
+                    "scaled_label": "ChipSHOUTER monitor at probe tip x20",
                     "values": volts,
                 },
                 "trigger": {
@@ -164,6 +168,7 @@ class AD2Adapter(BaseAdapter):
                 "samples": count,
                 "duration_s": count / sample_rate,
                 "analog_range_v": self._analog_range_v,
+                "pulse_probe_ratio": self._pulse_probe_ratio,
                 "mapping": {
                     "ui_ch3_pulse": "ad2_scope_ch1",
                     "ui_ch2_trigger": "ad2_dio0",
@@ -182,6 +187,7 @@ class AD2Adapter(BaseAdapter):
                 "digital_sample_rate_hz": self._digital_sample_rate_hz,
                 "samples": self._samples,
                 "analog_range_v": self._analog_range_v,
+                "pulse_probe_ratio": self._pulse_probe_ratio,
                 "mapping": {
                     "scope_ch1": "ChipSHOUTER voltage monitor",
                     "dio0": "ledger trigger/ref",

@@ -213,6 +213,14 @@ export async function ad2Capture() {
   return request('GET', '/devices/ad2/capture');
 }
 
+export async function ad2Configure(params: {
+  sample_rate_hz?: number;
+  samples?: number;
+  analog_range_v?: number;
+}) {
+  return request('POST', '/devices/ad2/configure', params);
+}
+
 export async function ad2StartStream(period_s = 0.5) {
   return request('POST', '/devices/ad2/start_stream', { period_s });
 }

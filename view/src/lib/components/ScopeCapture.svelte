@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ad2Capture, ad2Connect, ad2StartStream, ad2StopStream } from '$lib/api/control';
+  import { ad2Capture, ad2Configure, ad2Connect, ad2StartStream, ad2StopStream } from '$lib/api/control';
   import { ad2CaptureStore, type AD2Channel } from '$lib/stores/ad2';
   import { logStore } from '$lib/stores/log';
   import { activeCampaign } from '$lib/stores/campaign';
 
   const windowNs = 500;
   const triggerNs = 120;
+  const defaultProbeRatio = 20;
+  const pulseFullScaleV = 500;
+  const maxSvgPoints = 1200;
   const lanes = [
-    { ch: 'CH3', name: 'PULSE', unit: '200 V/div', color: 'var(--red)' },
+    { ch: 'CH3', name: 'PULSE', unit: '+/-250 V x20', color: 'var(--red)' },
     { ch: 'CH2', name: 'TRIG', unit: '3.3 V/div', color: 'var(--scope-cyan)' },
     { ch: 'CH1', name: 'CLK', unit: '1.8 V/div', color: 'var(--gold)' },
   ];
@@ -81,16 +84,35 @@
     return channel?.values?.length ? channel.values : null;
   }
 
-  function analogPoints(values: number[] | null, midY: number, spanY: number, fallback: string) {
+  function decimatedIndexes(length: number) {
+    if (length <= maxSvgPoints) return Array.from({ length }, (_, i) => i);
+    const step = Math.ceil(length / maxSvgPoints);
+    const indexes: number[] = [];
+    for (let i = 0; i < length; i += step) indexes.push(i);
+    if (indexes[indexes.length - 1] !== length - 1) indexes.push(length - 1);
+    return indexes;
+  }
+
+  function clamp(value: number, min: number, max: number) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function pulseMonitorPoints(
+    values: number[] | null,
+    midY: number,
+    spanY: number,
+    probeRatio: number,
+    fallback: string,
+  ) {
     if (!values || values.length < 2) return fallback;
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const scale = max - min || 1;
-    return values
-      .map((value, i) => {
+    const halfScale = pulseFullScaleV / 2;
+    const halfSpan = spanY / 2;
+    return decimatedIndexes(values.length)
+      .map((i) => {
         const px = (i / (values.length - 1)) * 100;
-        const normalized = (value - min) / scale;
-        const py = midY + spanY / 2 - normalized * spanY;
+        const scaled = values[i] * probeRatio;
+        const normalized = clamp(scaled / halfScale, -1, 1);
+        const py = midY - normalized * halfSpan;
         return `${px.toFixed(2)},${py.toFixed(2)}`;
       })
       .join(' ');
@@ -99,11 +121,12 @@
   function digitalPoints(values: number[] | null, lowY: number, highY: number, fallback: string) {
     if (!values || values.length < 2) return fallback;
     const points: string[] = [];
-    values.forEach((value, i) => {
+    decimatedIndexes(values.length).forEach((i) => {
+      const value = values[i];
       const px = (i / (values.length - 1)) * 100;
       const py = value ? highY : lowY;
       if (i > 0) {
-        const prevY = values[i - 1] ? highY : lowY;
+        const prevY = values[Math.max(0, i - 1)] ? highY : lowY;
         points.push(`${px.toFixed(2)},${prevY}`);
       }
       points.push(`${px.toFixed(2)},${py}`);
@@ -113,6 +136,17 @@
 
   function pulseFillPoints(points: string) {
     return `${points} 100,20 0,20`;
+  }
+
+  function formatTimeDiv(ns: number) {
+    if (ns >= 1_000_000) return `${(ns / 1_000_000).toFixed(2)} ms/div`;
+    if (ns >= 1_000) return `${(ns / 1_000).toFixed(1)} us/div`;
+    return `${Math.round(ns)} ns/div`;
+  }
+
+  function peakScaledVoltage(values: number[] | null, probeRatio: number) {
+    if (!values || values.length === 0) return null;
+    return Math.max(...values.map((value) => Math.abs(value * probeRatio)));
   }
 
   function colorValue(color: string) {
@@ -132,9 +166,13 @@
     ad2Error = '';
     try {
       if (action === 'connect') await ad2Connect();
-      if (action === 'capture') await ad2Capture();
+      if (action === 'capture') {
+        await ad2Configure({ sample_rate_hz: 2_000_000, samples: 8192, analog_range_v: 50 });
+        await ad2Capture();
+      }
       if (action === 'start') {
         await ad2Connect();
+        await ad2Configure({ sample_rate_hz: 2_000_000, samples: 8192, analog_range_v: 50 });
         await ad2StartStream(0.5);
         ad2Streaming = true;
       }
@@ -164,7 +202,9 @@
   $: captureAgeS = ad2CaptureData?.timestamp ? Math.max(0, Date.now() / 1000 - ad2CaptureData.timestamp) : null;
   $: sampleRateMHz = ad2CaptureData?.sample_rate_hz ? ad2CaptureData.sample_rate_hz / 1_000_000 : null;
   $: liveWindowNs = ad2CaptureData?.duration_s ? Math.round(ad2CaptureData.duration_s * 1_000_000_000) : windowNs;
-  $: livePulsePoints = analogPoints(pulseValues, 20, 34, pulsePoints(glitchNs));
+  $: probeRatio = ad2CaptureData?.pulse_probe_ratio ?? ad2CaptureData?.channels?.pulse?.probe_ratio ?? defaultProbeRatio;
+  $: pulsePeakV = peakScaledVoltage(pulseValues, probeRatio);
+  $: livePulsePoints = pulseMonitorPoints(pulseValues, 20, 34, probeRatio, pulsePoints(glitchNs));
   $: liveTriggerPoints = digitalPoints(triggerValues, 80, 64, triggerPoints());
   $: liveClockPoints = digitalPoints(clockValues, 152, 132, clockPoints());
   $: running = Boolean($activeCampaign?.active || ad2Streaming);
@@ -178,9 +218,10 @@
       <h2>Instruction timing window</h2>
     </div>
     <div class="scope-meta">
-      <span>{hasLiveCapture ? `${Math.round(liveWindowNs / 10)} ns/div` : '50 ns/div'}</span>
+      <span>{hasLiveCapture ? formatTimeDiv(liveWindowNs / 10) : '50 ns/div'}</span>
       <span class="cyan">DIO0 trigger</span>
-      <span class="red">CH1 pulse</span>
+      <span class="red">CH1 pulse x{probeRatio}</span>
+      <span class="red">{pulsePeakV !== null ? `peak ${pulsePeakV.toFixed(1)} V` : '+/-250 V span'}</span>
       <span class:running>{hasLiveCapture ? 'AD2 LIVE' : (running ? 'ACQUIRING' : 'STOPPED')}</span>
       <button class="mini" disabled={ad2Busy} on:click={() => runAD2(ad2Streaming ? 'stop' : 'start')}>
         {ad2Streaming ? 'STOP' : 'LIVE'}
@@ -266,7 +307,7 @@
 
   <div class="scope-foot">
     <span>outcome <b class={outcome}>{outcome}</b></span>
-    <span>CH3 AD2 scope CH1 pulse monitor</span>
+    <span>CH3 AD2 scope CH1 pulse monitor x{probeRatio}</span>
     <span>CH2 DIO0 trigger/ref</span>
     <span>CH1 DIO1 ledger clock</span>
     <span>{sampleRateMHz ? `${sampleRateMHz.toFixed(1)} MS/s` : 'AD2 waiting'}{captureAgeS !== null ? ` age ${captureAgeS.toFixed(1)}s` : ''}</span>
