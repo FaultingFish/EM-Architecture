@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field, model_validator
 class GridParams(BaseModel):
     """3D rectangular scan grid in logical (origin-relative) coordinates."""
 
-    origin: Tuple[float, float] = Field(..., description="Bottom-left XY in mm")
-    top_right: Tuple[float, float] = Field(..., description="Top-right XY in mm")
+    origin: Tuple[float, float] = Field(..., description="First XY corner in mm")
+    top_right: Tuple[float, float] = Field(..., description="Opposite XY corner in mm")
     step_size_mm: float = Field(1.0, gt=0)
     z_min_mm: float = 0.0
     z_max_mm: float = 0.5

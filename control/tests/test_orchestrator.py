@@ -302,6 +302,18 @@ def test_grid_points_origin_offset():
     assert (6.0, 10.0) in [(p[0], p[1]) for p in pts]
 
 
+def test_grid_points_support_negative_opposite_corner():
+    """Backside fixtures can put the opposite corner in negative logical XY."""
+    grid = {
+        "origin": (0.0, 0.0), "top_right": (-2.0, -1.0),
+        "step_size_mm": 1.0, "z_min_mm": 0.0, "z_max_mm": 0.0, "z_step_mm": 1.0,
+    }
+    pts = list(_grid_points(grid))
+    assert len(pts) == 6
+    assert [(p[0], p[1]) for p in pts[:3]] == [(0, 0), (-1, 0), (-2, 0)]
+    assert [(p[0], p[1]) for p in pts[3:]] == [(-2, -1), (-1, -1), (0, -1)]
+
+
 # --------------------------------------------------------------------------
 # perform_attempt classification
 # --------------------------------------------------------------------------

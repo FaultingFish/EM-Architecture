@@ -133,10 +133,8 @@
   }
 
   // ── Pre-flight estimate (read-only, computed before submit) ──
-  let gridAck = false;
-
   function spanSteps(a: number, b: number, step: number): number {
-    const span = b - a;
+    const span = Math.abs(b - a);
     if (!Number.isFinite(span) || !Number.isFinite(step) || step <= 0) return 1;
     return Math.max(1, Math.round(span / step) + 1);
   }
@@ -156,13 +154,12 @@
   $: totalAttempts = gridPts * sweepCount * attempts;
   $: estSeconds = Math.round(totalAttempts / 2);
 
-  // Re-prompt for tiny grids: clear the acknowledgement once the grid grows back to ≥4 pts,
-  // so a later edit that shrinks it again surfaces the warning afresh.
-  $: if (gridPts >= 4) gridAck = false;
-  $: smallGridBlocked = gridPts < 4 && !gridAck;
+  $: smallGridWarning = gridPts < 4;
+  $: reversedGridWarning = grid.top_right[0] < grid.origin[0] || grid.top_right[1] < grid.origin[1];
+  $: collapsedGridWarning = grid.top_right[0] === grid.origin[0] || grid.top_right[1] === grid.origin[1];
 
   $: formComplete = campaignName.trim() !== '' && selectedProject !== '';
-  $: canSubmit = formComplete && !smallGridBlocked && preflightState !== 'fail';
+  $: canSubmit = formComplete && preflightState !== 'fail';
 
   async function fetchPresets(projectId: string) {
     presetsLoading = true;
@@ -228,7 +225,6 @@
     const maxRuntimeSeconds = stops.max_runtime_seconds ?? stops.max_runtime_s;
     stopMaxRuntimeMinutes =
       maxRuntimeSeconds == null ? null : Math.max(1, Math.ceil(Number(maxRuntimeSeconds) / 60));
-    gridAck = false;
     preflightState = 'idle';
     preflightMessage = 'Preset loaded. Run preflight before start.';
     preflightChecks = [];
@@ -285,7 +281,7 @@
     return body;
   }
 
-  $: previewJson = formComplete && !smallGridBlocked ? JSON.stringify(buildBody(), null, 2) : '{}';
+  $: previewJson = formComplete ? JSON.stringify(buildBody(), null, 2) : '{}';
   $: preflightKey = formComplete ? JSON.stringify(buildBody()) : '';
   $: if (
     lastPreflightKey &&
@@ -548,7 +544,7 @@
 
       <GridConfig bind:value={grid} />
 
-      <div class="panel preflight" class:warn={smallGridBlocked}>
+      <div class="panel preflight" class:warn={smallGridWarning || reversedGridWarning || collapsedGridWarning}>
         <div class="preflight-head">
           <h3>Pre-flight</h3>
           <span class="preflight-pill {preflightState}">
@@ -576,18 +572,23 @@
             type="button"
             class="preflight-run"
             on:click={runPreflight}
-            disabled={!formComplete || smallGridBlocked || preflightState === 'running' || loading}
+            disabled={!formComplete || preflightState === 'running' || loading}
           >
             {preflightState === 'running' ? 'Checking...' : 'Run Preflight'}
           </button>
         </div>
-        {#if smallGridBlocked}
+        {#if smallGridWarning || reversedGridWarning || collapsedGridWarning}
           <div class="preflight-warn">
-            <p>Grid will only produce {gridPts} point{gridPts === 1 ? '' : 's'}. Did you mean this?</p>
-            <div class="preflight-actions">
-              <button type="button" class="ack" on:click={() => (gridAck = true)}>I meant it</button>
-              <button type="button" on:click={() => goto('/calibrate')}>Recalibrate</button>
-            </div>
+            {#if smallGridWarning}
+              <p>Grid will only produce {gridPts} point{gridPts === 1 ? '' : 's'}. Start is still allowed.</p>
+            {/if}
+            {#if reversedGridWarning}
+              <p>Opposite corner is left/below origin. Control will scan in the signed direction.</p>
+            {/if}
+            {#if collapsedGridWarning}
+              <p>One axis is zero. This is a row/column scan.</p>
+            {/if}
+            <button type="button" on:click={() => goto('/calibrate')}>Recalibrate</button>
           </div>
         {/if}
       </div>
@@ -660,8 +661,6 @@
       </button>
       {#if !formComplete}
         <p class="hint">Fill in name and select a project to enable submit.</p>
-      {:else if smallGridBlocked}
-        <p class="hint">Resolve the small-grid warning above to enable submit.</p>
       {/if}
     </div>
   </div>

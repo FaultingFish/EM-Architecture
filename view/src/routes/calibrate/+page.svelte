@@ -45,17 +45,22 @@
         }
       : null;
 
-  // Signed scan dimensions (top-right minus origin). A negative or near-zero span
-  // means the user never jogged far enough — surfaced as the "too small" warning below.
+  // Signed scan dimensions (opposite corner minus origin). Negative spans are valid
+  // for backside/reversed setups; campaigns will scan in that signed direction.
   $: width = originX != null && topRightX != null ? topRightX - originX : null;
   $: height = originY != null && topRightY != null ? topRightY - originY : null;
+  $: absWidth = width == null ? null : Math.abs(width);
+  $: absHeight = height == null ? null : Math.abs(height);
 
-  $: tooSmall = width != null && height != null && (width < 0.1 || height < 0.1);
+  $: collapsed = absWidth != null && absHeight != null && (absWidth < 0.01 || absHeight < 0.01);
+  $: smallAreaWarning =
+    absWidth != null && absHeight != null && !collapsed && (absWidth < 5 || absHeight < 5);
+  $: reversedWarning = width != null && height != null && (width < 0 || height < 0);
 
   // Implied grid-point count at the campaign default 1 mm step, for the "looks good" badge.
   $: nXY =
-    width != null && height != null && !tooSmall
-      ? (Math.ceil(width / 1) + 1) * (Math.ceil(height / 1) + 1)
+    absWidth != null && absHeight != null
+      ? (Math.ceil(absWidth / 1) + 1) * (Math.ceil(absHeight / 1) + 1)
       : null;
 
   function gotoStep(s: Step) {
@@ -144,7 +149,6 @@
 
   async function finish() {
     if (originX == null || originY == null || topRightX == null || topRightY == null) return;
-    if (tooSmall) return;
     await saveDefaultFixture();
     clearStaleCalibration();
     const qs = new URLSearchParams({
@@ -301,9 +305,9 @@
             <tr>
               <th>Grid size</th>
               <td>
-                {width?.toFixed(2)} mm × {height?.toFixed(2)} mm
-                {#if width != null && height != null}
-                  <span class="area">= {(width * height).toFixed(2)} mm²</span>
+                {absWidth?.toFixed(2)} mm × {absHeight?.toFixed(2)} mm
+                {#if absWidth != null && absHeight != null}
+                  <span class="area">= {(absWidth * absHeight).toFixed(2)} mm²</span>
                 {/if}
               </td>
             </tr>
@@ -312,28 +316,31 @@
 
         <div class="panel">
           <h4>Scan area</h4>
-          <p class="scan-dims">Scan area: {width?.toFixed(2)} × {height?.toFixed(2)} mm</p>
-          {#if tooSmall}
-            <div class="banner danger">
-              Scan area too small — go back and jog further before setting top-right.
+          <p class="scan-dims">Scan area: {absWidth?.toFixed(2)} × {absHeight?.toFixed(2)} mm</p>
+          {#if collapsed}
+            <div class="banner warning">
+              One axis is nearly zero. Saving is allowed, but campaigns will collapse to a row or column.
+            </div>
+          {:else if smallAreaWarning}
+            <div class="banner warning">
+              Small die map. This is allowed for backside work; confirm the endpoints before launching a campaign.
+            </div>
+          {:else if reversedWarning}
+            <div class="banner warning">
+              Opposite corner is in a negative direction. This is allowed; campaigns will scan signed X/Y.
             </div>
           {:else}
             <div class="badge ok">Looks good</div>
-            <p class="grid-est">≈ {nXY} grid points at the 1 mm default step</p>
           {/if}
+          <p class="grid-est">≈ {nXY} grid points at the 1 mm default step</p>
         </div>
 
         <div class="actions">
           <button on:click={jogToOrigin}>Jog to origin (test)</button>
-          <button on:click={saveDefaultFixture} disabled={savingFixture || tooSmall}>
+          <button on:click={saveDefaultFixture} disabled={savingFixture}>
             {savingFixture ? 'Saving...' : 'Save default die map'}
           </button>
-          <button
-            class="primary"
-            on:click={finish}
-            disabled={tooSmall}
-            title={tooSmall ? 'Scan area too small — go back to step 2 and jog further.' : ''}
-          >
+          <button class="primary" on:click={finish}>
             Save → Campaign
           </button>
         </div>
@@ -433,10 +440,10 @@
     color: var(--fg);
     margin: 0 0 0.5rem;
   }
-  .banner.danger {
-    background: rgba(255, 82, 82, 0.12);
-    border: 1px solid var(--err);
-    color: var(--err);
+  .banner.warning {
+    background: rgba(249, 168, 37, 0.12);
+    border: 1px solid var(--warn);
+    color: var(--warn);
     padding: 0.5rem 0.75rem;
     border-radius: var(--radius);
     font-size: 12px;

@@ -103,6 +103,21 @@ async def test_save_current_fixture_persists_machine_origin() -> None:
     assert ctx.events[-1] == ("fixture", fixture)
 
 
+async def test_save_current_fixture_allows_negative_backside_corner() -> None:
+    ctx = _Ctx()
+    ctx.state.top_right = (-4.1, -4.1)
+    ctx.state.position_machine = (-0.1, 0.9, 6.2)
+
+    result = await motion.save_current_fixture(
+        motion.SaveCurrentFixtureRequest(name="backside-die"),
+        ctx,
+    )
+
+    fixture = result["fixture"]
+    assert fixture["top_right"] == [-4.1, -4.1]
+    assert fixture["machine_top_right"] == [-0.1, 0.9, 6.2]
+
+
 async def test_apply_fixture_restores_origin_and_grid() -> None:
     ctx = _Ctx()
     ctx.config.update({

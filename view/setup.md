@@ -87,9 +87,11 @@ keeps the synthetic timing trace visible and reports AD2 as waiting.
 Use the `TRIG` button for a high-speed CH1 triggered capture; it stops the live
 stream, waits for a pulse-monitor edge, and renders the resulting AD2 capture.
 
-Calibration can save the bolted-down board as the default fixture. Campaigns
-load that saved grid and can apply the machine-space origin after ChipShover
-homes, so the chip remains at logical `(0, 0)` without hand-jogging.
+Calibration can save the bolted-down board as the default fixture after homing.
+The die map is defined by a first corner plus an opposite corner; small maps and
+negative/backside directions are warnings, not blockers. Campaigns load that
+saved grid and can apply the machine-space origin after ChipShover homes, so the
+chip remains at logical `(0, 0)` without hand-jogging.
 
 The Husky crowbar path is scaffolded in Control but not live hardware control
 yet. View should not present dual-target/Husky campaigns as operational until

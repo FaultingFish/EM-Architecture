@@ -60,8 +60,8 @@ def _count_sweep_points(sweep) -> int:
 
 
 def _count_grid_points(grid) -> int:
-    x_steps = int(round((grid.top_right[0] - grid.origin[0]) / grid.step_size_mm)) + 1
-    y_steps = int(round((grid.top_right[1] - grid.origin[1]) / grid.step_size_mm)) + 1
+    x_steps = int(round(abs(grid.top_right[0] - grid.origin[0]) / grid.step_size_mm)) + 1
+    y_steps = int(round(abs(grid.top_right[1] - grid.origin[1]) / grid.step_size_mm)) + 1
     z_step = grid.z_step_mm if grid.z_step_mm > 0 else 1
     z_range = grid.z_max_mm - grid.z_min_mm
     z_steps = int(round(z_range / z_step)) + 1 if z_range > 0 else 1
@@ -190,10 +190,16 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
     sweep_points = _count_sweep_points(materialized_sweep)
     total = grid_points * sweep_points
 
-    if campaign.grid.top_right[0] < campaign.grid.origin[0]:
-        blockers.append("grid top_right.x must be >= origin.x")
-    if campaign.grid.top_right[1] < campaign.grid.origin[1]:
-        blockers.append("grid top_right.y must be >= origin.y")
+    x_span = campaign.grid.top_right[0] - campaign.grid.origin[0]
+    y_span = campaign.grid.top_right[1] - campaign.grid.origin[1]
+    if x_span < 0:
+        warnings.append("grid opposite corner is left of origin; scanning X in the negative direction")
+    if y_span < 0:
+        warnings.append("grid opposite corner is below origin; scanning Y in the negative direction")
+    if x_span == 0:
+        warnings.append("grid X span is zero; campaign will scan a single X column")
+    if y_span == 0:
+        warnings.append("grid Y span is zero; campaign will scan a single Y row")
     if campaign.grid.z_max_mm < campaign.grid.z_min_mm:
         blockers.append("grid z_max_mm must be >= z_min_mm")
 
@@ -252,6 +258,8 @@ def _preflight(campaign: Campaign, ctx: AppContext) -> CampaignPreflight:
 
     if total > 100_000:
         warnings.append("campaign exceeds 100000 attempts; confirm runtime and wear before launch")
+    if grid_points < 4:
+        warnings.append(f"grid will only produce {grid_points} point{'s' if grid_points != 1 else ''}")
 
     return CampaignPreflight(
         ok=not blockers,

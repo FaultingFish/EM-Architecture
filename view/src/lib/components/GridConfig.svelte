@@ -19,6 +19,9 @@
     value.top_right = [$positionStore.x, $positionStore.y];
     value = value;
   }
+
+  $: xSpan = value.top_right[0] - value.origin[0];
+  $: ySpan = value.top_right[1] - value.origin[1];
 </script>
 
 <fieldset>
@@ -32,7 +35,7 @@
   </div>
 
   <div class="row">
-    <label>Top-right XY</label>
+    <label>Opposite XY</label>
     <input type="number" bind:value={value.top_right[0]} step="0.1" />
     <input type="number" bind:value={value.top_right[1]} step="0.1" />
     <button on:click={useCurrentAsTopRight} title="Use current probe position">Use pos</button>
@@ -53,7 +56,8 @@
   </div>
 
   <div class="area-info">
-    {(value.top_right[0] - value.origin[0]).toFixed(1)} x {(value.top_right[1] - value.origin[1]).toFixed(1)} mm
+    {Math.abs(xSpan).toFixed(1)} x {Math.abs(ySpan).toFixed(1)} mm
+    {#if xSpan < 0 || ySpan < 0}<span>signed</span>{/if}
   </div>
 </fieldset>
 
@@ -69,4 +73,5 @@
     color: var(--accent);
     text-align: right;
   }
+  .area-info span { color: var(--warn); margin-left: 0.35rem; }
 </style>

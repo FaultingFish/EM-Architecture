@@ -89,6 +89,28 @@ def test_preflight_ok_counts_budget():
     assert any("no automation_policy" in w for w in result.warnings)
 
 
+def test_preflight_allows_negative_backside_grid_with_warning():
+    ctx = _Context(_state("chipshover", "chipshouter", "scaffold", "xds110"))
+
+    result = _preflight(
+        _campaign(
+            grid=GridParams(
+                origin=(0.0, 0.0),
+                top_right=(-4.1, -4.1),
+                step_size_mm=1.0,
+                z_min_mm=0.0,
+                z_max_mm=0.0,
+                z_step_mm=0.1,
+            )
+        ),
+        ctx,
+    )
+
+    assert result.ok is True
+    assert result.grid_points == 25
+    assert any("negative direction" in w for w in result.warnings)
+
+
 def test_preflight_counts_materialized_target_delay_sweep(tmp_path, monkeypatch):
     root = tmp_path / "projects"
     project = root / "purpleboardtest"

@@ -61,11 +61,12 @@ def _utc_now() -> str:
 def _validate_fixture(raw: Dict[str, Any]) -> Dict[str, Any]:
     origin = [float(raw["origin"][0]), float(raw["origin"][1])]
     top_right = [float(raw["top_right"][0]), float(raw["top_right"][1])]
-    if top_right[0] <= origin[0] or top_right[1] <= origin[1]:
-        raise HTTPException(status_code=400, detail="fixture top_right must be greater than origin on X and Y")
     z_min = float(raw.get("z_min_mm", 0.0))
     z_max = float(raw.get("z_max_mm", 0.5))
     z_step = float(raw.get("z_step_mm", 0.1))
+    step_size = float(raw.get("step_size_mm", 1.0))
+    if step_size <= 0:
+        raise HTTPException(status_code=400, detail="fixture step_size_mm must be positive")
     if z_max < z_min:
         raise HTTPException(status_code=400, detail="fixture z_max_mm must be >= z_min_mm")
     if z_step <= 0:
@@ -77,7 +78,7 @@ def _validate_fixture(raw: Dict[str, Any]) -> Dict[str, Any]:
         "machine_origin": [float(v) for v in raw["machine_origin"][:3]],
         "machine_top_right": [float(v) for v in raw.get("machine_top_right")[:3]]
         if raw.get("machine_top_right") else None,
-        "step_size_mm": float(raw.get("step_size_mm", 1.0)),
+        "step_size_mm": step_size,
         "z_min_mm": z_min,
         "z_max_mm": z_max,
         "z_step_mm": z_step,

@@ -324,17 +324,19 @@ def _grid_points(grid: Any) -> Iterator[Tuple[float, float, float, int, int, int
     ox, oy = float(origin[0]), float(origin[1])
     tx, ty = float(top_right[0]), float(top_right[1])
 
-    x_steps = max(1, int(round((tx - ox) / step)) + 1) if step > 0 else 1
-    y_steps = max(1, int(round((ty - oy) / step)) + 1) if step > 0 else 1
+    x_steps = max(1, int(round(abs(tx - ox) / step)) + 1) if step > 0 else 1
+    y_steps = max(1, int(round(abs(ty - oy) / step)) + 1) if step > 0 else 1
     z_steps = max(1, int(round((z_max - z_min) / z_step)) + 1) if z_step > 0 else 1
+    x_step = step if tx >= ox else -step
+    y_step = step if ty >= oy else -step
 
     for zi in range(z_steps):
         z = z_min + zi * z_step
         for yi in range(y_steps):
-            y = oy + yi * step
+            y = oy + yi * y_step
             x_range = range(x_steps) if yi % 2 == 0 else range(x_steps - 1, -1, -1)
             for xi in x_range:
-                x = ox + xi * step
+                x = ox + xi * x_step
                 yield (x, y, z, xi, yi, zi)
 
 

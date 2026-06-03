@@ -100,7 +100,7 @@ Recommended initial scope mapping:
 |---|---|
 | `control:read` | `GET /api/control/readyz`, `/arm_state`, `/config`, `/devices`, `/runs`, `/heatmap`, `/campaigns` |
 | `devices:write` | Device connect/disconnect and Scaffold power set/cycle |
-| `motion:write` | Stage motion, homing, origin, and top-right calibration |
+| `motion:write` | Stage motion, homing, origin, and opposite-corner calibration |
 | `shouter:write` | Raw ChipSHOUTER config, arm/disarm, and pulse endpoints |
 | `safety:arm` | Control arm/disarm gate endpoints |
 | `target:flash` | Target flash/reset/debug attach/detach |

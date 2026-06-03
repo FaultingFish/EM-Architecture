@@ -187,7 +187,10 @@ about `20 V` at the ChipSHOUTER monitor point through the 20:1 probe.
 
 After homing, ChipShover clears the logical origin. For the bolted-down board,
 save the calibrated chip scan box as the default fixture from the calibration
-page. Control persists it in `~/.config/emfi-control/config.json` under
+page. The flow homes first, then records a first die corner and an opposite die
+corner. The opposite corner may be left/below the origin for backside fixtures;
+Control treats that as a signed scan direction and warns rather than blocking.
+Control persists the fixture in `~/.config/emfi-control/config.json` under
 `fixture.default_grid`, including both logical grid bounds and the machine-space
 origin. The campaign page can then apply the fixture after a home, restoring the
 chip corner as logical `(0, 0, 0)` without manually jogging the probe.
@@ -197,5 +200,5 @@ Useful endpoints:
 | Endpoint | Purpose |
 |---|---|
 | `GET /motion/fixture` | Read the saved default fixture |
-| `POST /motion/fixture/save_current` | Save the current origin/top-right as the default fixture |
+| `POST /motion/fixture/save_current` | Save the current first/opposite-corner map as the default fixture |
 | `POST /motion/fixture/apply` | Restore the saved machine origin and grid after homing |
