@@ -104,8 +104,8 @@ class AD2Adapter(BaseAdapter):
             analog = (ctypes.c_double * count)()
             digital = (ctypes.c_uint16 * count)()
 
-            self._dwf.FDwfAnalogInConfigure(self._hdwf, ctypes.c_bool(False), ctypes.c_bool(True))
-            self._dwf.FDwfDigitalInConfigure(self._hdwf, ctypes.c_bool(False), ctypes.c_bool(True))
+            self._dwf.FDwfDigitalInConfigure(self._hdwf, ctypes.c_bool(True), ctypes.c_bool(True))
+            self._dwf.FDwfAnalogInConfigure(self._hdwf, ctypes.c_bool(True), ctypes.c_bool(True))
 
             analog_status = ctypes.c_byte(0)
             digital_status = ctypes.c_byte(0)
@@ -223,6 +223,7 @@ class AD2Adapter(BaseAdapter):
         self._dwf.FDwfAnalogInChannelRangeSet.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_double]
         self._dwf.FDwfAnalogInFrequencySet.argtypes = [ctypes.c_int, ctypes.c_double]
         self._dwf.FDwfAnalogInBufferSizeSet.argtypes = [ctypes.c_int, ctypes.c_int]
+        self._dwf.FDwfAnalogInAcquisitionModeSet.argtypes = [ctypes.c_int, ctypes.c_int]
         self._dwf.FDwfAnalogInConfigure.argtypes = [ctypes.c_int, ctypes.c_bool, ctypes.c_bool]
         self._dwf.FDwfAnalogInStatus.argtypes = [ctypes.c_int, ctypes.c_bool, ctypes.POINTER(ctypes.c_byte)]
         self._dwf.FDwfAnalogInStatusData.argtypes = [
@@ -235,6 +236,7 @@ class AD2Adapter(BaseAdapter):
         self._dwf.FDwfDigitalInDividerSet.argtypes = [ctypes.c_int, ctypes.c_uint]
         self._dwf.FDwfDigitalInBufferSizeSet.argtypes = [ctypes.c_int, ctypes.c_int]
         self._dwf.FDwfDigitalInSampleFormatSet.argtypes = [ctypes.c_int, ctypes.c_int]
+        self._dwf.FDwfDigitalInAcquisitionModeSet.argtypes = [ctypes.c_int, ctypes.c_int]
         self._dwf.FDwfDigitalInConfigure.argtypes = [ctypes.c_int, ctypes.c_bool, ctypes.c_bool]
         self._dwf.FDwfDigitalInStatus.argtypes = [ctypes.c_int, ctypes.c_bool, ctypes.POINTER(ctypes.c_byte)]
         self._dwf.FDwfDigitalInStatusData.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
@@ -245,6 +247,7 @@ class AD2Adapter(BaseAdapter):
         self._dwf.FDwfAnalogInChannelRangeSet(self._hdwf, ctypes.c_int(0), ctypes.c_double(self._analog_range_v))
         self._dwf.FDwfAnalogInFrequencySet(self._hdwf, ctypes.c_double(self._sample_rate_hz))
         self._dwf.FDwfAnalogInBufferSizeSet(self._hdwf, ctypes.c_int(self._samples))
+        self._dwf.FDwfAnalogInAcquisitionModeSet(self._hdwf, ctypes.c_int(0))
         digital_clock_hz = ctypes.c_double(100_000_000.0)
         self._dwf.FDwfDigitalInInternalClockInfo(self._hdwf, ctypes.byref(digital_clock_hz))
         divider = max(1, int(round(digital_clock_hz.value / self._sample_rate_hz)))
@@ -252,6 +255,7 @@ class AD2Adapter(BaseAdapter):
         self._dwf.FDwfDigitalInDividerSet(self._hdwf, ctypes.c_uint(divider))
         self._dwf.FDwfDigitalInBufferSizeSet(self._hdwf, ctypes.c_int(self._samples))
         self._dwf.FDwfDigitalInSampleFormatSet(self._hdwf, ctypes.c_int(16))
+        self._dwf.FDwfDigitalInAcquisitionModeSet(self._hdwf, ctypes.c_int(0))
 
     def _error_message(self) -> str:
         if self._dwf is None:
