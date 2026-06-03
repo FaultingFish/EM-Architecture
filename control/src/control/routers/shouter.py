@@ -40,6 +40,12 @@ async def arm(ctx: AppContext = Depends(get_ctx)) -> dict:
     return {"ok": True, "state": "armed"}
 
 
+@router.get("/status")
+async def status(ctx: AppContext = Depends(get_ctx)) -> dict:
+    worker = ctx.workers.get("chipshouter")
+    return await call_adapter(worker, ctx.shouter.status)
+
+
 @router.post("/disarm")
 async def disarm(ctx: AppContext = Depends(get_ctx)) -> dict:
     worker = ctx.workers.get("chipshouter")

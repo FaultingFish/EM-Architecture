@@ -1,6 +1,7 @@
 <script lang="ts">
   import JogPad from './JogPad.svelte';
   import ScaffoldPowerCard from './ScaffoldPowerCard.svelte';
+  import ShouterArmToggle from './ShouterArmToggle.svelte';
   import { positionStore } from '$lib/stores/position';
   import { CONTROL_URL } from '$lib/config';
 
@@ -54,6 +55,7 @@
     <section>
       <div class="section-label">// power rails</div>
       <ScaffoldPowerCard />
+      <ShouterArmToggle />
     </section>
 
     <div class="spacer"></div>

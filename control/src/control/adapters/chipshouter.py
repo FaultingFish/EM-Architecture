@@ -351,3 +351,26 @@ class ChipShouterAdapter(BaseAdapter):
     def get_fault_active(self) -> List[Any]:
         self._require_connected()
         return _fault_names(self._impl.faults_current)
+
+    def status(self) -> Dict[str, Any]:
+        status = super().status()
+        state: Optional[str] = None
+        current_faults: List[str] = []
+        if self._impl is not None:
+            try:
+                state = str(self._impl.state)
+            except Exception as exc:
+                self._last_error = str(exc)
+            try:
+                current_faults = _fault_names(self._impl.faults_current)
+            except Exception:
+                current_faults = []
+        status.update(
+            {
+                "state": state,
+                "armed": _is_armed_state(state or ""),
+                "faults": current_faults,
+                "last_fault": self.last_fault,
+            }
+        )
+        return status

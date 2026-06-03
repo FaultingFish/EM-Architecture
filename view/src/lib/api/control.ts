@@ -148,6 +148,10 @@ export async function shouterConfig(params: Record<string, unknown>) {
   return request('POST', '/shouter/config', params);
 }
 
+export async function shouterStatus() {
+  return request('GET', '/shouter/status');
+}
+
 export async function shouterPulse() {
   return request('POST', '/shouter/pulse');
 }
